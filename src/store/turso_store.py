@@ -252,6 +252,25 @@ class TursoStore(Store):
         logger.info(f"공개 룰 재확인 대상 {len(out)}건")
         return out
 
+    _RULE_COLS = ("id", "cvss_score", "epss_score", "is_kev",
+                  "has_official_rules", "rules_snapshot", "last_rule_check_at")
+
+    def get_rule_rows(self, cve_ids, days: int = 90) -> Dict[str, Dict]:
+        # 대시보드에 나오는 행(live_ids 와 같은 기준)만 — 룰 스냅샷을 색인과 견줘 빠진 룰을 찾는다(rule_refresh).
+        ids = [str(c) for c in cve_ids if c]
+        cutoff = _days_ago(days)
+        rows: Dict[str, Dict] = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            found = self._query(
+                f"SELECT {', '.join(self._RULE_COLS)} FROM cves WHERE id IN ({marks}) "
+                "AND last_alert_state IS NOT NULL AND updated_at >= ?", (*chunk, cutoff))
+            for values in found:
+                row = self._row(values, self._RULE_COLS)
+                rows[row["id"]] = row
+        return rows
+
     _STAT_COLS = ("tier", "rows", "alerted", "fired", "vendor",
                   "published", "translated", "cvss")
 

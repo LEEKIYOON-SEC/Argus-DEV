@@ -1,9 +1,13 @@
-"""룰이 늘어난 CVE 의 룰 스냅샷 다시 만들기 (INVARIANTS §6).
+"""색인에는 있는데 화면(룰 스냅샷)에 없는 룰 채우기 (INVARIANTS §6).
 
-매시 재확인(main.check_for_official_rules)은 원래 룰이 하나도 없는 CVE 만 봤다. 그래서 룰이 하나라도 있는
-CVE 는 새 룰이 색인에 들어와도 화면에 나오지 않았다. 주간 색인(build_rule_index)이 직전 배포본보다 룰이
-늘어난 CVE 를 `grown` 에, 만든 시각을 `generated_at` 에 적고, 여기서 그 CVE 를 색인을 만든 뒤로 아직 다시
-보지 않았으면 다시 본다.
+룰 스냅샷은 CVE 를 분석하거나 다시 확인할 때만 만든다. 그래서 주간 색인(build_rule_index)에 새 룰이 들어와도 룰이
+하나라도 있던 CVE 는 그대로였다. 색인이 '룰이 늘어난 CVE' 목록을 적어 넘기던 방식은 매시 실행이 그 목록을 다 보기 전에
+색인을 다시 만들면 남은 CVE 를 잃었다(2026-10-22 운영 색인은 목록이 비어 CVE-2026-109618 의 Snort 룰이 화면에 나오지
+않았다). 그래서 매시 실행이 대시보드에 나오는 CVE 의 스냅샷을 지금 색인과 직접 견준다 — 지금 색인으로 다시 찾으면
+들어올 룰(rule_manager.missing)이 스냅샷에 없으면 다시 본다.
+
+같은 색인으로는 CVE 마다 한 번만 본다: 마지막으로 본 시각이 색인을 만든 시각(generated_at)보다 SETTLE 이상 뒤면
+넘어간다. 만든 직후에 본 것은 배포 · 캐시 때문에 옛 색인으로 봤을 수 있어 한 번 더 본다.
 
 - 룰이 없던 CVE: 지금처럼 알림 예산(max_rule_recheck) 안에서 먼저 보고, 찾으면 Slack 을 보낸다.
 - 이미 룰이 있던 CVE: 알림 없이 스냅샷만 바꾼다 — '룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다.
@@ -15,6 +19,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from logger import logger
 
 RULE_KEYS = ("network", "sigma", "yara", "nuclei", "splunk")
+SETTLE = datetime.timedelta(hours=1)
 
 
 def _when(ts) -> Optional[datetime.datetime]:
@@ -25,34 +30,41 @@ def _when(ts) -> Optional[datetime.datetime]:
     return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
 
 
-def due(rows: Dict[str, Dict], grown: List[str], built_at: str) -> Tuple[List[Dict], List[Dict]]:
-    """grown 가운데 추적 중이고 색인을 만든 뒤로 다시 보지 않은 CVE — (룰이 없던 것, 이미 룰이 있던 것)."""
+def _order(row: Dict):
+    # 중요한 것부터 — 기존 재확인(get_rule_recheck_candidates)과 같은 순서.
+    return (not row.get("is_kev"), -(row.get("cvss_score") or 0), -(row.get("epss_score") or 0), row["id"])
+
+
+def due(rows: Dict[str, Dict], built_at: str,
+        missing: Callable[[str, object], bool]) -> Tuple[List[Dict], List[Dict]]:
+    """스냅샷에 지금 색인의 룰이 빠졌고 이 색인으로 아직 다시 보지 않은 CVE — (룰이 없던 것, 이미 룰이 있던 것)."""
     built = _when(built_at)
     if built is None:
         return [], []
     fresh: List[Dict] = []
     known: List[Dict] = []
-    for cve in grown:
-        row = rows.get(cve)
-        if not row:
-            continue
+    for row in rows.values():
         last = _when(row.get("last_rule_check_at"))
-        if last is not None and last >= built:
+        if last is not None and last >= built + SETTLE:
+            continue
+        if not missing(row["id"], row.get("rules_snapshot")):
             continue
         (known if row.get("has_official_rules") else fresh).append(row)
-    return fresh, known
+    return sorted(fresh, key=_order), sorted(known, key=_order)
 
 
-def plan(db, grown: List[str], built_at: str, max_recheck: int) -> Tuple[List[Dict], List[Dict]]:
-    """알림을 보낼 수 있는 재확인 대상(룰이 늘어난 CVE 먼저, 남는 자리는 기존 대상)과 조용히 바꿀 대상."""
+def plan(db, ids: List[str], built_at: str, max_recheck: int,
+         missing: Callable[[str, object], bool]) -> Tuple[List[Dict], List[Dict]]:
+    """알림을 보낼 수 있는 재확인 대상(룰이 빠진 CVE 먼저, 남는 자리는 기존 대상)과 조용히 바꿀 대상."""
     fresh: List[Dict] = []
     known: List[Dict] = []
-    if grown and built_at:
+    if ids and built_at:
         try:
-            rows, _ = db.get_cves(grown)
-            fresh, known = due(rows, grown, built_at)
+            fresh, known = due(db.get_rule_rows(ids), built_at, missing)
+            logger.info(f"색인에는 있는데 화면에 없는 룰 — 룰이 없던 CVE {len(fresh):,}건 · "
+                        f"이미 룰이 있던 CVE {len(known):,}건")
         except Exception as e:
-            logger.warning(f"룰이 늘어난 CVE 조회 실패({e}) — 기존 재확인만 한다")
+            logger.warning(f"룰이 빠진 CVE 조회 실패({e}) — 기존 재확인만 한다")
     fresh = fresh[:max(0, max_recheck)]
     picked = {r["id"] for r in fresh}
     rest = max_recheck - len(fresh)

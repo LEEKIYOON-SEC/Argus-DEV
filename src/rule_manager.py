@@ -13,12 +13,14 @@ from logger import logger
 _INDEX_LOCK = threading.Lock()
 _INDEX: Optional[Dict[str, List[Dict]]] = None
 _INDEX_OK = False
-# 색인을 만든 시각과 직전 색인보다 룰이 늘어난 CVE (build_rule_index.grown_since) — 옛 색인에는 없다.
-_META: Dict = {"generated_at": "", "grown": []}
+# 색인을 만든 시각 — 매시 재확인이 같은 색인으로는 CVE 마다 한 번만 보게 한다(rule_refresh). 옛 색인에는 없다.
+_META: Dict = {"generated_at": ""}
 
 _LOCAL = os.path.join(pages.DATA_DIR, "detection-rules.json")
 
 _MAX_RULE_CHARS = 6000
+_NETWORK_MAX = 3
+_SID = re.compile(r"\bsid\s*:\s*(\d+)")
 
 
 def _index() -> Dict[str, List[Dict]]:
@@ -36,14 +38,16 @@ def index_ok() -> bool:
     return _INDEX_OK
 
 
-def grown() -> Tuple[List[str], str]:
+def built_at() -> str:
     _index()
-    return list(_META["grown"]), _META["generated_at"]
+    return _META["generated_at"]
+
+
+def indexed_ids() -> List[str]:
+    return list(_index())
 
 
 def _keep_meta(payload: Dict) -> None:
-    ids = payload.get("grown")
-    _META["grown"] = [str(c).upper() for c in ids] if isinstance(ids, list) else []
     _META["generated_at"] = str(payload.get("generated_at") or "")
 
 
@@ -104,6 +108,57 @@ def _fetch_text(entry: Dict) -> Optional[str]:
         return None
 
 
+def _pack(entry: Dict) -> Dict:
+    # 라이선스 표기는 색인 시점이 아니라 지금 표로 다시 정한다(옛 색인의 표기도 바로잡힌다).
+    return rule_license.apply({
+        "source": entry.get("source", ""),
+        "engine": entry.get("engine", ""),
+        "url": entry.get("url", ""),
+        "author": entry.get("author", ""),
+        "license_url": entry.get("license_url", ""),
+    })
+
+
+Pick = Tuple[Dict, Dict]  # (색인 항목, 라이선스 표기를 바로잡은 사본)
+
+
+def _choose(entries: List[Dict]) -> Tuple[List[Pick], Dict[str, Pick]]:
+    """스냅샷에 실을 색인 항목 — (네트워크 룰, 엔진마다 하나씩 싣는 룰).
+
+    네트워크 룰은 엔진마다 하나씩 돌아가며 3건까지 고르고, 엔진이 넷이면 넷 다 싣는다. 앞에서부터 3건을 고르면
+    색인 앞쪽 엔진의 룰이 자리를 다 차지해 다른 엔진의 룰이 화면에 나오지 않았다(INVARIANTS §6).
+    sigma · yara · splunk 는 본문을 실을 수 있는 룰이 링크만 둔 룰보다 앞선다.
+    """
+    queues: Dict[str, List[Pick]] = {}
+    single: Dict[str, Pick] = {}
+    for entry in entries:
+        engine = entry.get("engine", "")
+        packed = _pack(entry)
+        if packed.get("link_only"):
+            single.setdefault(engine, (entry, packed))
+        elif engine in rule_license.NETWORK_ENGINES:
+            queues.setdefault(engine, []).append((entry, packed))
+        elif engine in ("sigma", "yara", "splunk"):
+            if engine not in single or single[engine][1].get("link_only"):
+                single[engine] = (entry, packed)
+    network: List[Pick] = []
+    cap = max(_NETWORK_MAX, len(queues))
+    for depth in range(max((len(q) for q in queues.values()), default=0)):
+        network.extend(q[depth] for q in queues.values() if depth < len(q))
+    return network[:cap], single
+
+
+def rule_key(rule: Dict) -> Tuple[str, str]:
+    """같은 룰인지 견주는 열쇠 — 네트워크 룰은 출처와 SID(본문의 sid), 나머지는 링크.
+    색인 항목과 스냅샷의 룰에 똑같이 쓴다(스냅샷은 색인 항목의 source · url · 본문을 그대로 싣는다)."""
+    engine = rule.get("engine") or ""
+    if engine in rule_license.NETWORK_ENGINES:
+        code = (rule.get("code") or "").strip()
+        m = _SID.search(code)
+        return engine, f"{rule.get('source') or ''}:sid{m.group(1)}" if m else code
+    return engine, rule.get("url") or ""
+
+
 class RuleManager:
     def __init__(self):
         logger.debug("RuleManager 초기화 (인덱스 조회 전용)")
@@ -122,38 +177,24 @@ class RuleManager:
             return rules, True
 
         missed = 0
-        for entry in entries:
-            engine = entry.get("engine", "")
-            # 라이선스 표기는 색인 시점이 아니라 지금 표로 다시 정한다(옛 색인의 표기도 바로잡힌다).
-            packed = rule_license.apply({
-                "source": entry.get("source", ""),
-                "engine": engine,
-                "url": entry.get("url", ""),
-                "author": entry.get("author", ""),
-                "license_url": entry.get("license_url", ""),
-            })
+        network, single = _choose(entries)
+        for entry, packed in network:
+            code = _fetch_text(entry)
+            if code:
+                rules["network"].append({**packed, "code": code})
+            else:
+                missed += 1
+        for engine, (entry, packed) in single.items():
             if packed.get("link_only"):
                 # 본문을 싣지 않는 룰(점검 템플릿 · 라이선스를 확인하지 못한 YARA) — 원문을 받지 않는다.
-                if not rules.get(engine):
-                    rules[engine] = packed
-            elif engine in rule_license.NETWORK_ENGINES:
-                if len(rules["network"]) >= 3:
-                    continue
-                code = _fetch_text(entry)
-                if code:
-                    rules["network"].append({**packed, "code": code})
-                else:
-                    missed += 1
-            elif engine in ("sigma", "yara", "splunk"):
-                # 본문을 실을 수 있는 룰이 링크만 둔 룰보다 앞선다.
-                if rules.get(engine) and not rules[engine].get("link_only"):
-                    continue
-                code = _fetch_text(entry)
-                if code:
-                    rules[engine] = {**packed, "code": code,
-                                     "author": packed["author"] or author_of(code)}
-                else:
-                    missed += 1
+                rules[engine] = packed
+                continue
+            code = _fetch_text(entry)
+            if code:
+                rules[engine] = {**packed, "code": code,
+                                 "author": packed["author"] or author_of(code)}
+            else:
+                missed += 1
 
         if missed:
             logger.warning(f"  {cve_id}: 색인에 있는 룰 {missed}건의 원문을 받지 못했다 "
@@ -166,3 +207,13 @@ class RuleManager:
         if found:
             logger.info(f"  ✅ 공개 룰: {cve_id} — {', '.join(found)}")
         return rules, True
+
+
+def missing(cve_id: str, snapshot) -> bool:
+    """지금 색인으로 다시 찾으면 스냅샷에 없던 룰이 들어오는가 — 원문은 받지 않고 search_public_only 가 고를 룰만 견준다."""
+    network, single = _choose(RuleManager.lookup(cve_id))
+    want = {rule_key(entry) for entry, _ in network + list(single.values())}
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    have = {rule_key(r) for r in (snap.get("network") or []) if isinstance(r, dict)}
+    have.update(rule_key(r) for k, r in snap.items() if k != "network" and isinstance(r, dict))
+    return bool(want - have)
