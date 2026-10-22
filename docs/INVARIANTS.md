@@ -761,6 +761,12 @@ VulnCheck 커뮤니티 티어는 `/v3/backup/`이다. `/v3/index/`는 상위 티
 - **`docs/` 는 곧 배포되는 사이트다.** 여기 두는 파일은 전부 공개된다 — 참조되지
   않는 파일을 남기면 그대로 공중에 실린다(실측: 삭제된 README 의 스크린샷 4종
   2.2MB 가 계속 서빙되고 있었다).
+- **운영 저장소(Argus)에는 `tests/` 를 두지 않는다.** 그래서 `update-lifecycle.yml` 의 테스트 단계는 `tests/` 가
+  없으면 건너뛴다 — 코드는 이 저장소에서 테스트하고, 받은 데이터는 `update_lifecycle.py` 가 따로 검증한다(§12).
+  실측: 이 조건이 없어 Argus 를 만든 뒤(2026-10-03)로 수명주기 갱신이 테스트 단계
+  (`Start directory is not importable: 'tests'`)에서 멈춰 있었다.
+- 운영으로 옮길 때 주석을 지우더라도 **`docs/js/cwe-data.js` 머리의 MITRE 저작권 표기와 CWE 이용 약관 원문은
+  남긴다.** 약관이 사본마다 싣도록 요구하는 고지다(같은 때 운영 사본에서 주석과 함께 지워져 있었다).
 
 ### 테스트
 
@@ -783,7 +789,8 @@ TZ=UTC node --test tests/*.test.js                          # 아래 여섯 파�
 | `tests/test_export_facts.py` | export 의 `cve-facts.json` — 원문 제목 · 설명 · CNA · 제품 출처 · 번역 출처(`o`) 판정 · 증분 병합 · 배포본 없음(전량 export) · 조회 오류(쓰지 않고 배포본 이월) · 내보낼 때 EPSS 를 전량 파일로 다시 채움(이월된 행 포함 · 못 받거나 잘린 파일이면 DB 값 · 파일에 없는 CVE 는 그대로) |
 | `tests/test_rule_license.py` | `rule_license.py` — 출처별 라이선스(ET Open BSD · Snort Community GPLv2 · Sigma DRL · Splunk Apache) · YARA 원 저장소별 라이선스 · LICENSE 없는/모르는 저장소는 링크만 · 여러 번 적용해도 같음 · export 가 이월된 행까지 바로잡음 · 스냅샷이 링크만 둘 룰의 원문을 받지 않음 · 색인이 ET Open 의 BSD 범위 SID 만 실음 |
 
-`update-lifecycle.yml` 이 갱신 전에 같은 명령을 돌리고, 실패하면 데이터를 쓰지 않는다.
+`update-lifecycle.yml` 이 갱신 전에 같은 명령을 돌리고, 실패하면 데이터를 쓰지 않는다. `tests/` 가 없는
+운영 저장소에서는 이 단계를 건너뛴다(§10).
 네트워크도 `docs/data/` 도 쓰지 않는다 — 전부 `tests/fixtures/` 와 저장소의 `data/lifecycle_aliases.json` 이다.
 endoflife.date 응답은 `tests/fixtures/endoflife_v1/` 에 실제 v1 응답을 줄여 둔 사본을 쓰고, 상태 계산은
 Python·JS 가 같은 표(`lifecycle_status_cases.json`)를 확인한다.
@@ -949,7 +956,7 @@ CVE 10,958건   사이클까지 연결 588 · 제품만 연결(UNKNOWN) 291 · �
 ```
 
 **운영**: `update-lifecycle.yml` — 매일 02:47 UTC + 수동 실행, `argus-pipeline` 동시성 그룹 공유.
-테스트 → 갱신(요청 한 번으로 두 파일) → 바뀐 파일만 커밋·push → 배포본 이월 → CVE 맥락 사전 계산(§13, 실패해도 계속) →
+테스트(`tests/` 가 있을 때만) → 갱신(요청 한 번으로 두 파일) → 바뀐 파일만 커밋·push → 배포본 이월 → CVE 맥락 사전 계산(§13, 실패해도 계속) →
 Pages 배포(수동 실행은 바뀐 게 없어도 배포). 브랜치 보호로 봇 push 가 막히면 커밋 단계에서 멈추고, 사이트는
 마지막으로 커밋된 사본을 계속 쓴다.
 
