@@ -293,20 +293,6 @@ def load_previous() -> Dict[str, List[Dict]]:
         return {}
 
 
-def grown_since(index: Dict[str, List[Dict]], prev: Dict[str, List[Dict]]) -> List[str]:
-    # 직전 배포본보다 룰이 늘어난 CVE — 매시 재확인이 이미 룰이 있는 CVE 의 스냅샷도 다시 만든다(rule_refresh).
-    # 직전 배포본을 못 받았으면 전부를 늘어난 것으로 본다: 빠뜨리는 것보다 한 번 더 보는 게 낫다.
-    if not prev:
-        return sorted(index)
-    out = []
-    for cve, entries in index.items():
-        now = {(e.get("engine"), e.get("path")) for e in entries}
-        before = {(e.get("engine"), e.get("path")) for e in (prev.get(cve) or []) if isinstance(e, dict)}
-        if now - before:
-            out.append(cve)
-    return sorted(out)
-
-
 def carry_missing(index: Dict[str, List[Dict]], prev: Dict[str, List[Dict]],
                   missing: Set[str]) -> int:
     carried = 0
@@ -337,11 +323,10 @@ def main() -> int:
     if missing == ALL_ENGINES:
         logger.error("모든 소스가 실패했습니다 — 기존 파일을 덮어쓰지 않고 종료")
         return 1
-    prev = load_previous()
     if missing:
         logger.warning(f"갱신 못 한 엔진 {sorted(missing)} — 직전 인덱스에서 이월한다 "
                        f"(못 받은 것을 '룰 없음'으로 만들지 않는다)")
-        carried = carry_missing(index, prev, missing)
+        carried = carry_missing(index, load_previous(), missing)
         logger.info(f"  이월 {carried:,}개 매핑")
         if carried == 0:
             logger.error("이월할 직전 인덱스도 없습니다 — 덮어쓰지 않고 종료")
@@ -356,11 +341,6 @@ def main() -> int:
         for e in entries:
             by_engine[e["engine"]] = by_engine.get(e["engine"], 0) + 1
 
-    grown = grown_since(index, prev)
-    if not prev:
-        logger.warning("직전 인덱스가 없어 CVE 전부를 '룰이 늘어난 CVE'로 적는다")
-    logger.info(f"직전 인덱스보다 룰이 늘어난 CVE {len(grown):,}건")
-
     payload = {
         "_source": "SigmaHQ · Emerging Threats Open · Snort Community · "
                    "nuclei-templates · Splunk ESCU · YARA Forge",
@@ -371,7 +351,6 @@ def main() -> int:
         "engines": by_engine,
         "refreshed": sorted(refreshed),
         "carried": sorted(missing),
-        "grown": grown,
         "rules": index,
     }
     os.makedirs(_DATA, exist_ok=True)

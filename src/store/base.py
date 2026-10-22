@@ -62,6 +62,10 @@ class Store(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_rule_rows(self, cve_ids, days: int = 90) -> Dict[str, Dict]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_pipeline_state(self) -> Dict:
         raise NotImplementedError
 

@@ -167,6 +167,37 @@ class RuleManagerTests(unittest.TestCase):
         self.assertTrue(rules["yara"]["link_only"])
         self.assertNotIn("code", rules["yara"])
 
+    def test_network_rules_take_one_per_engine_first(self):
+        # 색인은 Snort Community 를 ET Open 앞에 둔다. 앞에서부터 3건을 고르던 때는 같은 엔진이 자리를 채워, 2026-10-22 운영
+        # 데이터로 이미 룰이 있던 CVE 를 다시 만들면 113곳에서 화면의 엔진(주로 Suricata)이 빠졌다.
+        def net(engine, source, sid):
+            return {"engine": engine, "source": source, "url": "", "path": f"{source}:sid{sid}",
+                    "code": f'alert tcp any any -> any any (msg:"x"; sid:{sid}; rev:1;)'}
+
+        index = {
+            "CVE-2026-109618": [net("snort2", "Snort 2.9 Community", 67359), net("snort2", "Snort 2.9 Community", 67375),
+                                net("snort3", "Snort 3 Community", 67359), net("snort3", "Snort 3 Community", 67375)],
+            "CVE-2009-1151": [net("snort3", "Snort 3 Community", 2281), net("snort2", "Snort 2.9 ET Open", 2010902),
+                              net("snort2", "Snort 2.9 ET Open", 2010903), net("suricata5", "Suricata 5 ET Open", 2010902),
+                              net("suricata7", "Suricata 7 ET Open", 2010902)],
+            "CVE-2010-3333": [net("snort2", "Snort 2.9 ET Open", sid) for sid in (2020699, 2016932, 2016933)]
+                             + [net("suricata5", "Suricata 5 ET Open", 2020699)],
+            "CVE-2016-0001": [net("snort2", "Snort 2.9 ET Open", sid) for sid in (2000001, 2000002, 2000003, 2000004)],
+        }
+        with mock.patch.object(rm, "_index", return_value=index), \
+                mock.patch.object(rm.requests, "get", side_effect=AssertionError("본문은 색인에 있다")):
+            picked = {cve: [rm.rule_key(r) for r in rm.RuleManager().search_public_only(cve)[0]["network"]]
+                      for cve in index}
+        self.assertEqual(picked["CVE-2026-109618"], [("snort2", "Snort 2.9 Community:sid67359"),
+                                                     ("snort3", "Snort 3 Community:sid67359"),
+                                                     ("snort2", "Snort 2.9 Community:sid67375")])
+        self.assertEqual([e for e, _ in picked["CVE-2009-1151"]], ["snort3", "snort2", "suricata5", "suricata7"],
+                         "엔진이 넷이면 넷 다 싣는다")
+        self.assertEqual(picked["CVE-2010-3333"], [("snort2", "Snort 2.9 ET Open:sid2020699"),
+                                                   ("suricata5", "Suricata 5 ET Open:sid2020699"),
+                                                   ("snort2", "Snort 2.9 ET Open:sid2016932")])
+        self.assertEqual(len(picked["CVE-2016-0001"]), 3, "엔진이 하나면 앞에서부터 3건")
+
 
 class RuleIndexTests(unittest.TestCase):
     """색인 — ET Open 은 BSD 범위 SID 만, 라이선스는 출처대로"""
@@ -218,19 +249,6 @@ class RuleIndexTests(unittest.TestCase):
         self.assertEqual(bri.cves_in("reference:cve,2021; cve.21-1; CVE_2021_12", bri._REF_CVE, bri._TAG_CVE, bri._NAME_CVE),
                          set(), "번호가 덜 적힌 것은 CVE 로 보지 않는다")
         self.assertEqual(bri.cves_in("reference:cve,2021-44228;"), set(), "형식을 넘기지 않으면 CVE- 문자열만 본다")
-
-    def test_grown_since_lists_cves_whose_rules_increased(self):
-        prev = {"CVE-2026-0001": [{"engine": "nuclei", "path": "http/cves/a.yaml"}],
-                "CVE-2026-0003": [{"engine": "sigma", "path": "rules/x.yml"}],
-                "CVE-2026-0004": [{"engine": "sigma", "path": "rules/old.yml"}, {"engine": "yara", "path": "R"}]}
-        index = {"CVE-2026-0001": [{"engine": "nuclei", "path": "http/cves/a.yaml"},
-                                   {"engine": "snort3", "path": "Snort 3 Community:sid67359"}],
-                 "CVE-2026-0002": [{"engine": "sigma", "path": "rules/new.yml"}],
-                 "CVE-2026-0003": [{"engine": "sigma", "path": "rules/x.yml"}],
-                 "CVE-2026-0004": [{"engine": "sigma", "path": "rules/old.yml"}]}
-        self.assertEqual(bri.grown_since(index, prev), ["CVE-2026-0001", "CVE-2026-0002"],
-                         "그대로이거나 줄기만 한 CVE 는 넣지 않는다")
-        self.assertEqual(bri.grown_since(index, {}), sorted(index), "직전 색인을 못 받으면 전부")
 
 
 if __name__ == "__main__":
