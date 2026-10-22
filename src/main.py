@@ -17,6 +17,7 @@ import feed
 import package_index
 import pipeline
 import risk
+import rule_refresh
 import signal_snapshot
 import state as pstate
 from pages import cve_url as _cve_url
@@ -29,6 +30,7 @@ from notifier import SlackNotifier
 from rate_limiter import (gemini_backoff, gemini_error_kind, rate_limit_manager)
 from report import make_analysis
 from rule_manager import RuleManager
+from rule_manager import grown as rule_manager_grown
 from rule_manager import index_ok as rule_manager_index_ok
 
 KST = pytz.timezone('Asia/Seoul')
@@ -455,12 +457,15 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
             return
 
         max_recheck = config.PERFORMANCE["max_rule_recheck"]
-        candidates = db.get_rule_recheck_candidates(limit=max_recheck)
+        # 색인에서 룰이 늘어난 CVE 를 먼저 본다 — 이미 룰이 있던 CVE 는 아래에서 알림 없이 스냅샷만 바꾼다.
+        grown, built_at = rule_manager_grown()
+        candidates, known = rule_refresh.plan(db, grown, built_at, max_recheck)
+        known = known[:config.PERFORMANCE["max_rule_refresh"]]
 
-        if not candidates:
+        if not candidates and not known:
             logger.info("재확인 대상 없음")
             return
-        logger.info(f"재확인 대상: {len(candidates)}건")
+        logger.info(f"재확인 대상: {len(candidates)}건 · 룰이 늘어난 CVE(이미 룰 있음) {len(known)}건")
 
         found_count = 0
 
@@ -527,7 +532,11 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
                     logger.warning(f"{cve_id} 룰 재확인 쿨다운 기록 실패: {e}")
                 continue
 
-        logger.info(f"=== 공식 룰 재발견 체크 완료 (발견: {found_count}건) ===")
+        refreshed = rule_refresh.refresh_known(
+            db, rule_manager.search_public_only, known,
+            now=lambda: datetime.datetime.now(KST).isoformat(), soon=_recheck_soon,
+            deadline_ts=deadline_ts)
+        logger.info(f"=== 공식 룰 재발견 체크 완료 (발견: {found_count}건 · 스냅샷 갱신: {refreshed}건) ===")
 
     except Exception as e:
         logger.error(f"공식 룰 체크 프로세스 실패: {e}")

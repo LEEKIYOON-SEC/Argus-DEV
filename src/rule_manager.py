@@ -13,6 +13,8 @@ from logger import logger
 _INDEX_LOCK = threading.Lock()
 _INDEX: Optional[Dict[str, List[Dict]]] = None
 _INDEX_OK = False
+# 색인을 만든 시각과 직전 색인보다 룰이 늘어난 CVE (build_rule_index.grown_since) — 옛 색인에는 없다.
+_META: Dict = {"generated_at": "", "grown": []}
 
 _LOCAL = os.path.join(pages.DATA_DIR, "detection-rules.json")
 
@@ -34,18 +36,34 @@ def index_ok() -> bool:
     return _INDEX_OK
 
 
+def grown() -> Tuple[List[str], str]:
+    _index()
+    return list(_META["grown"]), _META["generated_at"]
+
+
+def _keep_meta(payload: Dict) -> None:
+    ids = payload.get("grown")
+    _META["grown"] = [str(c).upper() for c in ids] if isinstance(ids, list) else []
+    _META["generated_at"] = str(payload.get("generated_at") or "")
+
+
 def _load() -> Tuple[Dict[str, List[Dict]], bool]:
     try:
         payload = pages.fetch_published_json("detection-rules.json", timeout=120)
         if payload is not None:
             idx = (payload or {}).get("rules") or {}
+            _keep_meta(payload or {})
             logger.info(f"탐지 룰 인덱스 로드(배포본): {len(idx):,}건")
             return idx, True
     except Exception as e:
         logger.warning(f"탐지 룰 인덱스 배포본 로드 실패({e}) → 체크아웃 사본 확인")
     try:
         with open(_LOCAL, encoding="utf-8") as f:
-            idx = (json.load(f) or {}).get("rules") or {}
+            payload = json.load(f) or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        idx = payload.get("rules") or {}
+        _keep_meta(payload)
         logger.info(f"탐지 룰 인덱스 로드(파일): {len(idx):,}건")
         return idx, True
     except (OSError, ValueError):
