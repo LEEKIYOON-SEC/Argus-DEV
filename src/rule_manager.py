@@ -19,7 +19,6 @@ _META: Dict = {"generated_at": ""}
 _LOCAL = os.path.join(pages.DATA_DIR, "detection-rules.json")
 
 _MAX_RULE_CHARS = 6000
-_NETWORK_MAX = 3
 _SID = re.compile(r"\bsid\s*:\s*(\d+)")
 
 
@@ -125,8 +124,8 @@ Pick = Tuple[Dict, Dict]  # (색인 항목, 라이선스 표기를 바로잡은 
 def _choose(entries: List[Dict]) -> Tuple[List[Pick], Dict[str, Pick]]:
     """스냅샷에 실을 색인 항목 — (네트워크 룰, 엔진마다 하나씩 싣는 룰).
 
-    네트워크 룰은 엔진마다 하나씩 돌아가며 3건까지 고르고, 엔진이 넷이면 넷 다 싣는다. 앞에서부터 3건을 고르면
-    색인 앞쪽 엔진의 룰이 자리를 다 차지해 다른 엔진의 룰이 화면에 나오지 않았다(INVARIANTS §6).
+    네트워크 룰은 색인에 있는 것을 다 싣고 엔진별로 묶는다(색인이 엔진마다 3건까지 담아 CVE 당 최대 12건).
+    CVE 당 3건으로 자르면 같은 CVE 의 다른 룰이 화면에 나오지 않았다(INVARIANTS §6).
     sigma · yara · splunk 는 본문을 실을 수 있는 룰이 링크만 둔 룰보다 앞선다.
     """
     queues: Dict[str, List[Pick]] = {}
@@ -141,11 +140,7 @@ def _choose(entries: List[Dict]) -> Tuple[List[Pick], Dict[str, Pick]]:
         elif engine in ("sigma", "yara", "splunk"):
             if engine not in single or single[engine][1].get("link_only"):
                 single[engine] = (entry, packed)
-    network: List[Pick] = []
-    cap = max(_NETWORK_MAX, len(queues))
-    for depth in range(max((len(q) for q in queues.values()), default=0)):
-        network.extend(q[depth] for q in queues.values() if depth < len(q))
-    return network[:cap], single
+    return [pick for queue in queues.values() for pick in queue], single
 
 
 def rule_key(rule: Dict) -> Tuple[str, str]:

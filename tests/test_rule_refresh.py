@@ -155,7 +155,7 @@ class MissingTests(unittest.TestCase):
 
     def test_snapshot_made_from_this_index_misses_nothing(self):
         snap = self.made_now()
-        self.assertEqual([r["engine"] for r in snap["network"]], ["snort2", "snort3", "snort2"])
+        self.assertEqual([r["engine"] for r in snap["network"]], ["snort2", "snort2", "snort3", "snort3"])
         self.assertEqual(snap["yara"]["url"], YARA_DRL["url"], "본문을 실을 수 있는 YARA 가 앞선다")
         self.assertFalse(rm.missing("CVE-2026-109618", snap))
 
@@ -165,10 +165,11 @@ class MissingTests(unittest.TestCase):
             r["code"] = r["code"].replace("rev:1", "rev:2")
         self.assertFalse(rm.missing("CVE-2026-109618", snap), "네트워크 룰은 출처와 SID 로 견준다")
 
-    def test_other_rule_or_moved_link_is_missing(self):
+    def test_snapshot_without_an_indexed_rule_or_with_moved_link_is_missing(self):
         snap = self.made_now()
-        snap["network"][2] = rm._pack(net("suricata5", "Suricata 5 ET Open", 2010902)) | {"code": "sid:2010902;"}
-        self.assertTrue(rm.missing("CVE-2026-109618", snap), "고를 룰(snort2 sid 67375)이 빠졌다")
+        snap["network"] = [r for r in snap["network"] if rm.rule_key(r) != ("snort3", "Snort 3 Community:sid67375")]
+        self.assertTrue(rm.missing("CVE-2026-109618", snap),
+                        "CVE 당 3건으로 자르던 때의 운영 스냅샷 — Snort 3 sid 67375 가 없다")
         snap = self.made_now()
         snap["yara"]["url"] = "https://github.com/Neo23x0/signature-base/blob/3ce6640c/yara/b.yar#L2-L31"
         self.assertTrue(rm.missing("CVE-2026-109618", snap), "YARA Forge 가 링크를 새 커밋으로 옮겼다")
