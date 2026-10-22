@@ -326,6 +326,9 @@ p90.0 = 0.041  36,640건
 | **재게시하는 룰에는 원 저자 · 라이선스를 함께 싣는다** | SigmaHQ DRL 1.1 은 author · 룰 링크 · 라이선스 이름과 링크를, BSD · MIT · Apache-2.0 · GPL 은 저작권 · 라이선스 고지 보존을 요구한다. 룰 본문 위에 라이선스(전문 링크) · 저작권 문구(ET Open · Snort Community, YARA 의 BSD · MIT 저장소) · 작성자 · 룰 원문 링크를 적는다. 색인에 author 가 없으면 룰 본문에서 뽑는다 |
 | **탐지 룰 인덱스를 못 받은 회차는 `has_official_rules`·`rules_snapshot` 을 쓰지 않는다** (`rule_manager.index_ok()`) | 로더가 실패해도 `{}` 를 돌려주므로 '룰 없음'으로 DB 에 기록돼 이전에 확인해 둔 룰이 지워졌다. 룰 재확인도 이때는 건너뛴다 — 돌려봐야 7일 쿨다운만 태운다 |
 | **룰 인덱스 생성이 부분 실패하면 실패한 엔진만 직전 배포본에서 이월한다** (`build_rule_index.carry_missing`) | SigmaHQ 하나만 403 이어도 sigma 가 빠진 인덱스가 배포되고, 그걸 읽은 파이프라인이 해당 CVE 를 '룰 없음'으로 기록했다. 전부 실패하거나 이월할 직전본도 없으면 덮어쓰지 않고 종료 |
+| **룰 본문에서 CVE 는 출처가 적는 방식으로 찾는다** — `CVE-YYYY-N` 문자열에 더해 Snort · Suricata 의 `reference:cve,YYYY-N`, Sigma 태그 `cve.YYYY-N`, YARA 룰 이름 `CVE_YYYY_N` (`build_rule_index.cves_in`) | `CVE-` 문자열만 찾아 메시지에 CVE 번호가 없는 룰을 통째로 놓쳤다. 2026-10-22 실측: 네트워크 룰이 있는 CVE 2,185 → 3,417건(Snort 3 Community 17 → 1,031건), 추적 CVE 253건에 네트워크 룰이 새로 생기고 그중 226건은 화면에 룰이 하나도 없었다(예: CVE-2026-109618 의 Snort sid 67359 · 67375). Sigma · YARA 는 각 4건 |
+| 주석 처리된(기본으로 꺼진) 룰은 싣지 않는다 | 제조사가 기본으로 꺼 둔 룰이다. Snort 2.9 Community 는 룰 대부분이 이렇게 꺼져 있고, 넣으면 CVE 가 396건 더 늘어난다(같은 실측) |
+| **색인은 직전 배포본보다 룰이 늘어난 CVE 를 `grown` 에, 만든 시각을 `generated_at` 에 적는다. 매시 재확인은 그 CVE 를 색인을 만든 뒤로 다시 보지 않았으면 이미 룰이 있어도 다시 본다** (`rule_refresh`) | 재확인이 룰이 하나도 없는 CVE 만 봐서, 룰이 하나라도 있으면 새 룰이 색인에 들어와도 화면에 나오지 않았다. 룰이 없던 CVE 는 지금처럼 알림 예산(`max_rule_recheck` 10건) 안에서 먼저 보고 Slack 을 보낸다. 이미 룰이 있던 CVE 는 알림 없이 `max_rule_refresh`(30건)씩 스냅샷만 바꾼다 — '룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다. 직전 배포본을 못 받으면 전부를 늘어난 것으로 적는다(빠뜨리는 것보다 한 번 더 보는 게 낫다). 같은 실측으로 처음 한 번은 추적 CVE 305건(룰 없던 227 · 있던 78)이 대상이다 |
 | **지표를 못 받았으면 화면에 `unknown` 이라 쓴다 — 0% 나 No 가 아니다** | 리포트가 `EPSS 0.00%` · `KEV No` 로 적어 위험을 낮춰 불렀다. 실제로 관측된 0 은 그대로 0 이다 |
 | 조회 실패로 끊긴 페이징은 **부분 결과를 돌려주지 않고 예외를 올린다** (`tracked_states`) | 백필 4종이 그걸 전량으로 믿고 "손볼 행 없음 → 정상 종료" 하거나 축소된 인덱스를 덮어썼다 |
 | 수집한 필드는 `STATE_FIELDS` 에 있어야 저장된다 | `references` 가 빠져 있었다. 알림 시점에는 신선한 state 라 '벤더 권고' 버튼이 나오는데, 리포트 보강이 저장된 state 로 다시 만들면 참고 자료가 통째로 비었고 analyzer 입력에서도 사라졌다 |
@@ -787,7 +790,8 @@ TZ=UTC node --test tests/*.test.js                          # 아래 여섯 파�
 | `tests/test_update_cwe.py` | `update_cwe.py` — MITRE XML(네임스페이스 · zip) 파싱 · 모르는 추상화 수준 · 판 번호 없음 · 잘린 파일은 거부 · 번호순 출력 · 사본에 저작권 표기 · 약관 문구 · 바뀐 것 없으면 쓰지 않음 · 실패하면 기존 파일 그대로 · 저장소의 `cwe-data.js` 검증 |
 | `tests/test_lifecycle.py` | `update_lifecycle.py` — 응답 파싱(없는 값은 null) · 상태 표(JS 와 같은 표) · 날짜 칸 구분 · **요청 한 번(`/products/full`)으로 두 파일** · 잘린 응답 · 이름 없는 제품 · 제품 하나 문제면 그 제품만 이월 · 전체 목록이 20% 넘게 줄면 쓰지 않음 · 바뀐 날만 씀 · 실패하면 두 파일 모두 그대로 · 전체 목록과 추적 파일의 날짜가 같음 · 화면 fixture(`lifecycle_catalog_sample.json`) = 생성 결과 · 커밋된 두 파일 검증 |
 | `tests/test_export_facts.py` | export 의 `cve-facts.json` — 원문 제목 · 설명 · CNA · 제품 출처 · 번역 출처(`o`) 판정 · 증분 병합 · 배포본 없음(전량 export) · 조회 오류(쓰지 않고 배포본 이월) · 내보낼 때 EPSS 를 전량 파일로 다시 채움(이월된 행 포함 · 못 받거나 잘린 파일이면 DB 값 · 파일에 없는 CVE 는 그대로) |
-| `tests/test_rule_license.py` | `rule_license.py` — 출처별 라이선스(ET Open BSD · Snort Community GPLv2 · Sigma DRL · Splunk Apache) · YARA 원 저장소별 라이선스 · LICENSE 없는/모르는 저장소는 링크만 · 여러 번 적용해도 같음 · export 가 이월된 행까지 바로잡음 · 스냅샷이 링크만 둘 룰의 원문을 받지 않음 · 색인이 ET Open 의 BSD 범위 SID 만 실음 |
+| `tests/test_rule_license.py` | `rule_license.py` — 출처별 라이선스(ET Open BSD · Snort Community GPLv2 · Sigma DRL · Splunk Apache) · YARA 원 저장소별 라이선스 · LICENSE 없는/모르는 저장소는 링크만 · 여러 번 적용해도 같음 · export 가 이월된 행까지 바로잡음 · 스냅샷이 링크만 둘 룰의 원문을 받지 않음 · 색인이 ET Open 의 BSD 범위 SID 만 실음 · 색인이 CVE 를 출처가 적는 방식(`reference:cve` · Sigma 태그 · YARA 룰 이름)으로 찾고 주석 처리된 룰은 뺌 · 직전 색인보다 룰이 늘어난 CVE(`grown`) |
+| `tests/test_rule_refresh.py` | `rule_refresh.py` — 룰이 늘어난 CVE 중 색인을 만든 뒤 다시 보지 않은 것만(시간대가 달라도 시각으로 비교) · 룰이 없던 것은 알림 예산 안에서 먼저, 남는 자리는 기존 대상 · 이미 룰이 있던 것은 알림 없이 스냅샷만(못 찾거나 원문을 다 못 받으면 이전 스냅샷 유지) · 시간 예산 · 옛 색인(`generated_at` 없음)은 예전 동작 |
 
 `update-lifecycle.yml` 이 갱신 전에 같은 명령을 돌리고, 실패하면 데이터를 쓰지 않는다. `tests/` 가 없는
 운영 저장소에서는 이 단계를 건너뛴다(§10).

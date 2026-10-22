@@ -189,6 +189,49 @@ class RuleIndexTests(unittest.TestCase):
         self.assertEqual((entry["license"], entry["source"]), ("BSD", "Suricata 7 ET Open"))
         self.assertIn("sid:2034647", entry["code"])
 
+    def test_reference_cve_without_cve_in_message_is_indexed(self):
+        # 실측 2026-10-22: snort3-community.rules 의 sid 67359 는 메시지에 CVE 번호가 없고 reference 로만 적는다.
+        body = "\n".join([
+            'alert http $EXTERNAL_NET any -> $HOME_NET any ( msg:"SERVER-WEBAPP PHP serialized integer key collision '
+            'remote code execution attempt"; flow:to_server,established; http_client_body; content:"i:4294967296|3B|"; '
+            'metadata:policy balanced-ips drop,ruleset community; reference:cve,2026-109618; reference:cve,2026-109619; '
+            'classtype:web-application-attack; gid:1; sid:67359; rev:2; )',
+            '# alert tcp any any -> any any ( msg:"disabled"; reference:cve,2026-5555; gid:1; sid:60001; rev:1; )',
+        ])
+        resp = mock.Mock(status_code=200, text=body)
+        sources = [("Snort 3 Community", "https://example/snort3-community.rules", None, "snort3")]
+        index = {}
+        with mock.patch.object(bri, "_NETWORK_SOURCES", sources), mock.patch.object(bri.requests, "get", return_value=resp):
+            done = bri.collect_network(index)
+        self.assertEqual(done, {"snort3"})
+        self.assertEqual(sorted(index), ["CVE-2026-109618", "CVE-2026-109619"], "주석 처리된(꺼진) 룰은 싣지 않는다")
+        entry = index["CVE-2026-109618"][0]
+        self.assertEqual((entry["engine"], entry["license"], entry["path"]), ("snort3", "GPLv2", "Snort 3 Community:sid67359"))
+        self.assertIn("sid:67359", entry["code"])
+
+    def test_cves_in_reads_each_source_form(self):
+        self.assertEqual(bri.cves_in("reference:cve,2021-44228; reference: CVE , CVE-2014-6271;", bri._REF_CVE),
+                         {"CVE-2021-44228", "CVE-2014-6271"})
+        self.assertEqual(bri.cves_in("tags:\n  - attack.t1190\n  - cve.2021-44228\n", bri._TAG_CVE), {"CVE-2021-44228"})
+        self.assertEqual(bri.cves_in("rule EXPL_Log4j_CVE_2021_44228_JAVA_Exception {", bri._NAME_CVE), {"CVE-2021-44228"})
+        self.assertEqual(bri.cves_in("title: Exploit CVE-2023-23397 (Outlook)"), {"CVE-2023-23397"})
+        self.assertEqual(bri.cves_in("reference:cve,2021; cve.21-1; CVE_2021_12", bri._REF_CVE, bri._TAG_CVE, bri._NAME_CVE),
+                         set(), "번호가 덜 적힌 것은 CVE 로 보지 않는다")
+        self.assertEqual(bri.cves_in("reference:cve,2021-44228;"), set(), "형식을 넘기지 않으면 CVE- 문자열만 본다")
+
+    def test_grown_since_lists_cves_whose_rules_increased(self):
+        prev = {"CVE-2026-0001": [{"engine": "nuclei", "path": "http/cves/a.yaml"}],
+                "CVE-2026-0003": [{"engine": "sigma", "path": "rules/x.yml"}],
+                "CVE-2026-0004": [{"engine": "sigma", "path": "rules/old.yml"}, {"engine": "yara", "path": "R"}]}
+        index = {"CVE-2026-0001": [{"engine": "nuclei", "path": "http/cves/a.yaml"},
+                                   {"engine": "snort3", "path": "Snort 3 Community:sid67359"}],
+                 "CVE-2026-0002": [{"engine": "sigma", "path": "rules/new.yml"}],
+                 "CVE-2026-0003": [{"engine": "sigma", "path": "rules/x.yml"}],
+                 "CVE-2026-0004": [{"engine": "sigma", "path": "rules/old.yml"}]}
+        self.assertEqual(bri.grown_since(index, prev), ["CVE-2026-0001", "CVE-2026-0002"],
+                         "그대로이거나 줄기만 한 CVE 는 넣지 않는다")
+        self.assertEqual(bri.grown_since(index, {}), sorted(index), "직전 색인을 못 받으면 전부")
+
 
 if __name__ == "__main__":
     unittest.main()
