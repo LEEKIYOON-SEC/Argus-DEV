@@ -669,7 +669,7 @@ def _main() -> None:
 
     pstate.write_rpd_state(rate_limit_manager.export_rpd_state())
 
-    tracked = sum(1 for o in outcomes if o.status == "tracked")
+    tracked = sum(1 for o in outcomes if o.status == "tracked" and o.fresh)
     notifier.send_batch_summary(dashboard_url=_dashboard_url(), tracked=tracked)
 
     if time.time() < deadline:

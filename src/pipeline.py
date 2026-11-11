@@ -32,6 +32,8 @@ class Outcome:
     cve_id: str
     status: str
     tier: str = risk.T3
+    # 이번에 처음 추적 목록에 들어왔는가 — 요약의 '관찰 등록' 건수는 이것만 센다(다시 저장한 행은 세지 않는다).
+    fresh: bool = False
 
 
     @property
@@ -188,7 +190,7 @@ def process(state: Dict, db, notifier, *, reason_prefix: str = "",
         if rows is not None:
             rows.forget(cve_id)
         return Outcome(cve_id, "alerted" if (announce and sent) else "tracked",
-                       decision.tier)
+                       decision.tier, fresh=last is None)
 
     except Exception as e:
         logger.error(f"{cve_id} 처리 실패: {e}", exc_info=True)

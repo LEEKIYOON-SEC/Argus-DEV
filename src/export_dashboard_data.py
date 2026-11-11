@@ -3,6 +3,7 @@ import sys
 import json
 import urllib.error
 import datetime as dt
+from typing import Optional
 from collections import defaultdict
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -397,23 +398,35 @@ def live_ids(db, days: int = 90):
 _FULL_EXPORT_MAX_AGE_H = 24
 
 
-def _take_full_export_flag(db) -> bool:
+def _full_export_requested(db) -> bool:
+    """전량 export 요청이 있는가 — 읽기만 한다. 파일을 다 쓴 뒤 _clear_full_export 가 지운다.
+
+    시작할 때 지우면 export 가 도중에 죽었을 때 요청이 사라져 백필 결과가 화면에 반영되지 않았다.
+    """
     try:
-        return db.take_full_export_flag()
+        return db.has_full_export_flag()
     except StoreError as e:
         print(f"  전량 export 표시 확인 실패(무시): {e}", flush=True)
         return False
 
 
-def fetch_live_products() -> dict:
+def _clear_full_export(db) -> None:
+    try:
+        db.clear_full_export_flag()
+    except StoreError as e:
+        print(f"  전량 export 표시를 지우지 못함(다음 회차도 전량): {e}", flush=True)
+
+
+def fetch_live_products() -> Optional[dict]:
+    """배포된 제품 인덱스 — 읽지 못하면 None (빈 dict 는 '읽었는데 비어 있음')."""
     try:
         payload = pages.fetch_published_json("cve-products.json", timeout=180)
-        if payload is None:
-            return {}
+        if not isinstance(payload, dict) or not isinstance(payload.get("map"), dict):
+            return None
         return decode_product_index(payload)
     except Exception as e:
-        print(f"  직전 제품 인덱스를 읽지 못함({e}) → 이번 회차분으로만 만든다", flush=True)
-        return {}
+        print(f"  직전 제품 인덱스를 읽지 못함({e})", flush=True)
+        return None
 
 
 def fetch_live_facts() -> tuple:
@@ -613,6 +626,26 @@ def _doomed(rows: list) -> list:
     return [r["id"] for r in rows if r.get("id") and not _is_alerting_row(r)]
 
 
+RETENTION_PAGES = 10
+
+
+def _retire(db, before: str, act, **filters) -> tuple:
+    """기준일보다 오래된 행을 쪽 단위로 훑어 지울 것만 act 에 넘긴다 — (처리한 수, 남긴 수).
+
+    남기는 행(악용 중)은 다음 쪽에서 건너뛴다. 첫 쪽만 보면 남는 행이 그 쪽을 다 채웠을 때
+    뒤에 있는 행은 영영 정리되지 않았다.
+    """
+    done = kept = 0
+    for _ in range(RETENTION_PAGES):
+        rows = db.retention_rows(before, RETENTION_BATCH, offset=kept, **filters)
+        doomed = _doomed(rows)
+        done += act(doomed) or 0
+        kept += len(rows) - len(doomed)
+        if len(rows) < RETENTION_BATCH:
+            break
+    return done, kept
+
+
 def apply_retention_policy(db, days: int = 120, marker_days: int = 30,
                            delete_days: int = 180, watch_days: int = 90,
                            max_rows: int = 20000) -> int:
@@ -622,23 +655,18 @@ def apply_retention_policy(db, days: int = 120, marker_days: int = 30,
     def cutoff(n):
         return (now - dt.timedelta(days=n)).isoformat()
 
-    stale = db.retention_rows(cutoff(days), batch, tracked=True)
-    cleaned = db.blank_states(_doomed(stale))
+    cleaned, _ = _retire(db, cutoff(days), db.blank_states, tracked=True)
 
     deleted_count = db.delete_markers(cutoff(marker_days), batch)
     if deleted_count:
         print(f"  구 마커 {deleted_count}건 청소 ({marker_days}일 경과)", flush=True)
 
-    cand = db.retention_rows(cutoff(watch_days), batch, unalerted=True)
-    victims = _doomed(cand)
-    kept = len(cand) - len(victims)
-    watch_count = db.delete_rows(victims)
+    watch_count, kept = _retire(db, cutoff(watch_days), db.delete_rows, unalerted=True)
     if watch_count or kept:
         print(f"  관찰 {watch_count}건 만료 삭제 ({watch_days}일간 신호 없음)"
               f"{f' · 악용 중이라 보존 {kept}건' if kept else ''}", flush=True)
 
-    old_rows = db.retention_rows(cutoff(delete_days), batch)
-    purged_count = db.delete_rows(_doomed(old_rows))
+    purged_count, _ = _retire(db, cutoff(delete_days), db.delete_rows)
     if purged_count:
         print(f"  오래된 행 {purged_count}건 삭제 ({delete_days}일 경과)", flush=True)
 
@@ -673,19 +701,6 @@ def _count(db, tracked: bool = False) -> int:
         return 0
 
 
-def _generate_sample_data(data_dir: str):
-    print("  [!] 저장소에 연결하지 못함 → 빈 샘플 데이터 생성", flush=True)
-
-    cve_data = []
-    stats = export_stats(cve_data)
-
-    for filename, data in [("cves.json", cve_data), ("stats.json", stats)]:
-        path = os.path.join(data_dir, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"  {filename} → {path}", flush=True)
-
-
 def main(data_dir: str = None):
     print("=== Dashboard Data Export ===", flush=True)
     db = _get_db()
@@ -694,16 +709,25 @@ def main(data_dir: str = None):
     os.makedirs(data_dir, exist_ok=True)
 
     if db is None:
-        _generate_sample_data(data_dir)
-        print("=== Export 완료 (샘플 데이터) ===", flush=True)
-        return
+        # 빈 cves.json · stats.json 을 쓰면 배포 단계가 '이번 실행 생성분'으로 보고 대시보드를 비운다.
+        # 아무것도 쓰지 않고 실패로 끝내면 배포 단계가 직전 배포본을 그대로 이어받는다.
+        print("  [!] 저장소에 연결하지 못함 → 파일을 쓰지 않는다 (배포본 유지)", flush=True)
+        raise SystemExit(1)
 
     print("[1/4] CVE 데이터 export...", flush=True)
-    if _take_full_export_flag(db):
+    full_requested = _full_export_requested(db)
+    if full_requested:
         print("  백필 반영 요청 있음 → 이번은 전량 export", flush=True)
         previous, since = None, None
     else:
         previous, since = load_previous_export(data_dir)
+    carried = {}
+    if previous is not None:
+        carried = fetch_live_products()
+        if carried is None:
+            # 직전 인덱스 없이 병합하면 이번에 바뀌지 않은 CVE 의 제품이 표에 실린 3개로 줄어든 채 굳는다.
+            print("  직전 제품 인덱스를 읽지 못함 → 이번은 전량 export 로 다시 만든다", flush=True)
+            previous, since, carried = None, None, {}
     carried_facts, facts_status = {}, "ok"
     if previous is not None:
         carried_facts, facts_status = fetch_live_facts()
@@ -722,7 +746,6 @@ def main(data_dir: str = None):
         cve_data = merge_exports(previous, fresh, keep=live_ids(db))
         print(f"  증분 export: 변경 {len(fresh)}건 → 병합 후 {len(cve_data)}건 "
               f"(직전 {len(previous)}건)", flush=True)
-    carried = fetch_live_products() if previous is not None else {}
     merged_products = []
     restored = 0
     for e in cve_data:
@@ -779,6 +802,8 @@ def main(data_dir: str = None):
     stats_path = os.path.join(data_dir, "stats.json")
     pages.write_json(stats_path, stats)
     print(f"  Stats → {stats_path}", flush=True)
+    if full_requested:
+        _clear_full_export(db)
 
     print("[3/4] 주간 리포트 확인...", flush=True)
     try:

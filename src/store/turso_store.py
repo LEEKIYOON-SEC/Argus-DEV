@@ -321,11 +321,17 @@ class TursoStore(Store):
     def request_full_export(self) -> bool:
         return self.set_pipeline_state({"force_full_export": True})
 
-    def take_full_export_flag(self) -> bool:
+    def has_full_export_flag(self) -> bool:
         rows = self._query("SELECT value FROM pipeline_state WHERE key = 'force_full_export'")
-        if not rows or not rows[0][0] or rows[0][0] == "false":
-            return False
+        return bool(rows and rows[0][0] and rows[0][0] != "false")
+
+    def clear_full_export_flag(self) -> None:
         self._write("DELETE FROM pipeline_state WHERE key = 'force_full_export'")
+
+    def take_full_export_flag(self) -> bool:
+        if not self.has_full_export_flag():
+            return False
+        self.clear_full_export_flag()
         return True
 
     def get_snapshot_digest(self, source: str) -> Optional[str]:
@@ -382,8 +388,8 @@ class TursoStore(Store):
     _RETENTION_COLS = ("id", "is_kev", "cvss_score", "epss_score", "last_alert_state")
 
     def retention_rows(self, before: str, limit: int, *, tracked: bool = False,
-                       unalerted: bool = False, oldest_first: bool = False
-                       ) -> List[Dict]:
+                       unalerted: bool = False, oldest_first: bool = False,
+                       offset: int = 0) -> List[Dict]:
         clauses = ["updated_at < ?"]
         if tracked:
             clauses.append("last_alert_state IS NOT NULL")
@@ -392,8 +398,8 @@ class TursoStore(Store):
         rows = self._query(
             f"SELECT {', '.join(self._RETENTION_COLS)} FROM cves "
             f"WHERE {' AND '.join(clauses)} "
-            f"ORDER BY {'updated_at' if oldest_first else 'id'} LIMIT ?",
-            (before, max(1, limit)))
+            f"ORDER BY {'updated_at' if oldest_first else 'id'} LIMIT ? OFFSET ?",
+            (before, max(1, limit), max(0, offset)))
         return [self._row(r, self._RETENTION_COLS) for r in rows]
 
     def delete_markers(self, before: str, limit: int) -> int:

@@ -175,6 +175,41 @@ class MissingTests(unittest.TestCase):
         self.assertTrue(rm.missing("CVE-2026-109618", snap), "YARA Forge 가 링크를 새 커밋으로 옮겼다")
 
 
+    def test_snapshot_body_longer_than_its_line_range_is_missing(self):
+        snap = self.made_now()
+        self.assertFalse(rm.missing("CVE-2026-109618", snap))
+        snap["yara"]["code"] = "\n".join(f"line {n}" for n in range(200))
+        self.assertTrue(rm.missing("CVE-2026-109618", snap), "파일 앞 6000자를 통째로 실은 옛 스냅샷 — 링크는 30줄")
+
+
+class CutTests(unittest.TestCase):
+    """원문은 링크의 줄 범위(#L2-L31)만 싣는다 — 여러 룰이 든 YARA 파일에서 다른 룰이 실리지 않게"""
+
+    FILE = "\n".join(f"line {n}" for n in range(1, 101))
+
+    def test_cuts_to_the_line_range(self):
+        self.assertEqual(rm._cut(self.FILE, "https://github.com/a/b/blob/c/d.yar#L40-L42"), "line 40\nline 41\nline 42")
+        self.assertEqual(rm._cut(self.FILE, "https://github.com/a/b/blob/c/d.yar#L7"), "line 7")
+
+    def test_keeps_the_text_when_there_is_no_usable_range(self):
+        self.assertEqual(rm._cut(self.FILE, "https://github.com/a/b/blob/c/d.yml"), self.FILE)
+        self.assertEqual(rm._cut(self.FILE, "https://github.com/a/b/blob/c/d.yar#L500-L510"), self.FILE)
+        self.assertEqual(rm._cut(self.FILE, "https://github.com/a/b/blob/c/d.yar#L9-L3"), self.FILE)
+
+    def test_fetch_requests_the_file_without_the_fragment_and_cuts(self):
+        resp = mock.Mock(text=self.FILE)
+        with mock.patch.object(rm.requests, "get", return_value=resp) as get:
+            code = rm._fetch_text({"url": "https://github.com/a/b/blob/c/d e.yar#L99-L100"})
+        self.assertEqual(code, "line 99\nline 100")
+        self.assertEqual(get.call_args[0][0], "https://raw.githubusercontent.com/a/b/c/d e.yar")
+
+    def test_overrun_ignores_the_truncation_mark(self):
+        url = "https://github.com/a/b/blob/c/d.yar#L1-L2"
+        self.assertFalse(rm._overrun({"url": url, "code": "a\nb" + rm._CUT_MARK}))
+        self.assertTrue(rm._overrun({"url": url, "code": "a\nb\nc"}))
+        self.assertFalse(rm._overrun({"url": url, "link_only": True}))
+
+
 class RefreshKnownTests(unittest.TestCase):
     """이미 룰이 있던 CVE — 알림 없이 스냅샷만, 못 찾은 것으로 지우지 않는다"""
 

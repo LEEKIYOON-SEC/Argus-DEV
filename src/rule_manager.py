@@ -87,20 +87,52 @@ def author_of(code: str) -> str:
     return "" if name in ("|", ">", "") else name[:120]
 
 
+_LINES = re.compile(r"#L(\d+)(?:-L(\d+))?$")
+_CUT_MARK = "\n# … (생략 — 전체는 출처 링크 참조)"
+
+
+def _overrun(rule: Dict) -> bool:
+    """스냅샷 본문이 링크의 줄 범위보다 긴가 — 범위로 자르기 전에 파일 앞부분을 통째로 실은 옛 스냅샷이다."""
+    m = _LINES.search(rule.get("url") or "")
+    code = rule.get("code")
+    if not m or not isinstance(code, str):
+        return False
+    span = int(m.group(2) or m.group(1)) - int(m.group(1)) + 1
+    body = code[:-len(_CUT_MARK)] if code.endswith(_CUT_MARK) else code
+    return span > 0 and len(body.splitlines()) > span
+
+
+def _cut(text: str, url: str) -> str:
+    """URL 끝의 #L2-L31 범위만 남긴다 — 여러 룰이 든 파일에서 이 CVE 의 룰만 싣기 위해서다.
+
+    파일 앞 6000자를 그대로 실으면 범위가 뒤쪽인 룰은 다른 룰의 본문이 실린다(실측 YARA 66건 중 9건).
+    범위가 없거나 파일보다 뒤면 자르지 않는다.
+    """
+    m = _LINES.search(url)
+    if not m:
+        return text
+    first = int(m.group(1))
+    last = int(m.group(2) or first)
+    lines = text.splitlines()
+    if first < 1 or last < first or first > len(lines):
+        return text
+    return "\n".join(lines[first - 1:last])
+
+
 def _fetch_text(entry: Dict) -> Optional[str]:
     if entry.get("code"):
         return entry["code"]
     url = entry.get("url") or ""
-    raw = (url.replace("https://github.com/", "https://raw.githubusercontent.com/")
-              .replace("/blob/", "/"))
+    raw = (_LINES.sub("", url).replace("https://github.com/", "https://raw.githubusercontent.com/")
+           .replace("/blob/", "/"))
     if not raw.startswith("http"):
         return None
     try:
         resp = requests.get(raw, timeout=30, headers={"User-Agent": "argus-rules"})
         resp.raise_for_status()
-        text = resp.text
+        text = _cut(resp.text, url)
         if len(text) > _MAX_RULE_CHARS:
-            text = text[:_MAX_RULE_CHARS] + "\n# … (생략 — 전체는 출처 링크 참조)"
+            text = text[:_MAX_RULE_CHARS] + _CUT_MARK
         return text
     except requests.exceptions.RequestException as e:
         logger.debug(f"룰 원문 수신 실패({raw}): {e}")
@@ -205,10 +237,14 @@ class RuleManager:
 
 
 def missing(cve_id: str, snapshot) -> bool:
-    """지금 색인으로 다시 찾으면 스냅샷에 없던 룰이 들어오는가 — 원문은 받지 않고 search_public_only 가 고를 룰만 견준다."""
+    """지금 색인으로 다시 찾으면 스냅샷이 달라지는가 — 원문은 받지 않고 search_public_only 가 고를 룰만 견준다.
+
+    스냅샷에 없는 룰이 있거나, 본문이 링크의 줄 범위보다 길면(다른 룰까지 실린 옛 스냅샷) 다시 본다.
+    """
     network, single = _choose(RuleManager.lookup(cve_id))
     want = {rule_key(entry) for entry, _ in network + list(single.values())}
     snap = snapshot if isinstance(snapshot, dict) else {}
     have = {rule_key(r) for r in (snap.get("network") or []) if isinstance(r, dict)}
-    have.update(rule_key(r) for k, r in snap.items() if k != "network" and isinstance(r, dict))
-    return bool(want - have)
+    singles = [r for k, r in snap.items() if k != "network" and isinstance(r, dict)]
+    have.update(rule_key(r) for r in singles)
+    return bool(want - have) or any(_overrun(r) for r in singles)

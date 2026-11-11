@@ -94,6 +94,14 @@ class Store(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def has_full_export_flag(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def clear_full_export_flag(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def export_rows(self, since: Optional[str], days: int = 90) -> List[Dict]:
         raise NotImplementedError
 
@@ -107,8 +115,8 @@ class Store(ABC):
 
     @abstractmethod
     def retention_rows(self, before: str, limit: int, *, tracked: bool = False,
-                       unalerted: bool = False, oldest_first: bool = False
-                       ) -> List[Dict]:
+                       unalerted: bool = False, oldest_first: bool = False,
+                       offset: int = 0) -> List[Dict]:
         raise NotImplementedError
 
     @abstractmethod
