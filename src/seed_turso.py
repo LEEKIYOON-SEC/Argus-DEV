@@ -123,14 +123,13 @@ def _fill_nvd(db, deadline: float, api_key: str):
         if not any(meaningful(a.get("vendor")) for a in affected):
             fresh_misses.add(cve_id)
             continue
-        state["affected"] = affected
-        pending.append({"id": cve_id, "last_alert_state": state})
+        pending.append({"id": cve_id, "patch": {"affected": affected}})
         done += 1
         if len(pending) >= 200:
-            db.bulk_save_states(pending, "벤더")
+            db.patch_states(pending, "벤더")
             pending = []
     if pending:
-        db.bulk_save_states(pending, "벤더")
+        db.patch_states(pending, "벤더")
     if fresh_misses:
         db.set_pipeline_state(
             {_VENDOR_MISS_KEY: sorted(known_misses | fresh_misses)})

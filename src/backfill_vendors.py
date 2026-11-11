@@ -12,6 +12,9 @@ from logger import logger
 
 
 
+_SAVE_EVERY = 50
+
+
 def _fetch_cpe(cve_id: str, api_key: str, existing: List[Dict] = None) -> List[Dict]:
     headers = nvd.headers(api_key)
     try:
@@ -51,7 +54,7 @@ def main() -> int:
     logger.info(f"대상 {len(rows):,}건 중 이번 실행 {len(targets):,}건 "
                 f"(예상 {len(targets) * gap / 60:.0f}분)")
 
-    updates, hit, miss = [], 0, 0
+    updates, hit, miss, ok = [], 0, 0, 0
     for i, row in enumerate(targets, 1):
         cve_id = row.get("id")
         state = row.get("last_alert_state")
@@ -60,17 +63,20 @@ def main() -> int:
         affected = _fetch_cpe(cve_id, api_key, state.get("affected"))
         if affected:
             hit += 1
-            new_state = dict(state)
-            new_state["affected"] = affected
-            updates.append({"id": cve_id, "last_alert_state": new_state})
+            # affected 키만 쓴다 — 몇십 분 전에 읽은 상태를 통째로 쓰면 그 사이의 변경이 지워진다.
+            updates.append({"id": cve_id, "patch": {"affected": affected}})
             logger.info(f"  [{i}/{len(targets)}] {cve_id} → "
                         f"{affected[0]['vendor']} / {affected[0]['product']}")
         else:
             miss += 1
+        if len(updates) >= _SAVE_EVERY:
+            # 끝에 한 번만 저장하면 시간 제한으로 작업이 끊길 때 전부 잃는다.
+            ok += db.patch_states(updates, "영향 벤더")
+            updates = []
         if i < len(targets):
             time.sleep(gap)
 
-    ok = db.bulk_save_states(updates, "영향 벤더")
+    ok += db.patch_states(updates, "영향 벤더")
     if ok:
         db.request_full_export()
     logger.info("=" * 60)

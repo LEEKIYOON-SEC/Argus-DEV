@@ -583,15 +583,13 @@ def backfill_reports(db: Store, deadline_ts: float, limit: int = 0) -> int:
             continue
         if not analysis:
             continue
-        state['analysis'] = analysis
-        payload = {"id": row['id'], "last_alert_state": state,
-                   "updated_at": row.get('updated_at')
-                   or datetime.datetime.now(KST).isoformat()}
+        # 분석은 수십 초가 걸린다 — 그 사이 fast-lane 이 바꾼 상태를 덮지 않게 analysis 키만 쓴다.
+        payload = {"id": row['id'], "patch": {"analysis": analysis}}
         if rules_info:
             payload["has_official_rules"] = rules_info.get('has_official', False)
             payload["rules_snapshot"] = rules_info.get('rules')
             payload["last_rule_check_at"] = datetime.datetime.now(KST).isoformat()
-        if db.upsert_cve(payload):
+        if db.patch_states([payload], "리포트"):
             made += 1
     logger.info(f"📝 리포트 보강 완료: {made}/{len(rows)}건")
     if made:

@@ -1,3 +1,4 @@
+import re
 import datetime
 import json
 import os
@@ -17,6 +18,7 @@ _COLS = ("id", "cvss_score", "epss_score", "is_kev", "last_alert_state",
          "last_alert_at", "has_official_rules", "rules_snapshot",
          "last_rule_check_at", "updated_at")
 _WRITE_CHUNK = 200
+_STATE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _now() -> str:
@@ -163,6 +165,56 @@ class TursoStore(Store):
                     if self.upsert_cve(item):
                         done += 1
             logger.info(f"  {label} 저장 {min(i + len(chunk), len(updates)):,}/{len(updates):,}")
+        return done
+
+    _PATCH_COLS = ("cvss_score", "has_official_rules", "rules_snapshot", "last_rule_check_at")
+
+    def _patch_sql(self, item: Dict) -> Tuple[str, tuple]:
+        patch = item.get("patch") or {}
+        if not item.get("id") or not patch:
+            raise StoreError("patch 에 id 나 바꿀 키가 없다")
+        sets, vals = [], []
+        paths = []
+        for key, value in patch.items():
+            if not _STATE_KEY.match(str(key)):
+                raise StoreError(f"상태 키 이름이 올바르지 않다: {key!r}")
+            paths.append(f"'$.{key}', json(?)")
+            vals.append(json.dumps(value, ensure_ascii=False))
+        sets.append(f"last_alert_state = json_set(last_alert_state, {', '.join(paths)})")
+        if "affected" in patch:
+            sets.append("has_vendor = ?")
+            vals.append(_has_vendor({"affected": patch["affected"]}))
+        cols, col_vals = self._params({k: item[k] for k in self._PATCH_COLS if k in item})
+        for col, val in zip(cols, col_vals):
+            sets.append(f"{col} = ?")
+            vals.append(val)
+        vals.append(item["id"])
+        return (f"UPDATE cves SET {', '.join(sets)} "
+                f"WHERE id = ? AND last_alert_state IS NOT NULL", tuple(vals))
+
+    def patch_states(self, updates: List[Dict], label: str = "상태") -> int:
+        done = 0
+        for i in range(0, len(updates), _WRITE_CHUNK):
+            chunk = updates[i:i + _WRITE_CHUNK]
+            try:
+                with self._lock:
+                    n = 0
+                    for item in chunk:
+                        sql, params = self._patch_sql(item)
+                        n += max(0, self._conn.execute(sql, params).rowcount)
+                    self._conn.commit()
+                done += n
+            except Exception as e:
+                with self._lock:
+                    self._conn.rollback()
+                logger.warning(f"{label} 배치 갱신 실패({len(chunk)}건): {e} → 행 단위 재시도")
+                for item in chunk:
+                    try:
+                        done += 1 if self._write(*self._patch_sql(item)) > 0 else 0
+                    except StoreError as err:
+                        logger.error(f"상태 갱신 실패 ({item.get('id')}): {err}")
+            if len(updates) > _WRITE_CHUNK:
+                logger.info(f"  {label} 갱신 {min(i + len(chunk), len(updates)):,}/{len(updates):,}")
         return done
 
     def count_tracked(self) -> int:

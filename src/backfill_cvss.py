@@ -113,6 +113,10 @@ def apply_scores(state: Dict, found: Dict) -> Dict:
     return new
 
 
+# recompute 가 바꾸는 키 — 저장할 때 이것만 쓴다(상태를 통째로 쓰면 그 사이 fast-lane 변경이 지워진다).
+_CVSS_KEYS = ("cvss", "cvss_vector", "cvss_version", "cvss_scores", "tier")
+
+
 def _priority(row: Dict) -> Tuple[int, int, str]:
     state = row.get("last_alert_state") or {}
     return (risk.tier_rank(str(state.get("tier") or risk.T3)),
@@ -232,13 +236,13 @@ def run(limit: int, dry_run: bool, workers: int = 24, nvd_budget: float = 2400.0
         updates.append({
             "id": cve_id,
             "cvss_score": new["cvss"],
-            "last_alert_state": new,
+            "patch": {k: new[k] for k in _CVSS_KEYS},
         })
 
     if dry_run:
         ok = 0
     else:
-        ok = db.bulk_save_states(updates, "CVSS")
+        ok = db.patch_states(updates, "CVSS")
         if ok:
             db.request_full_export()
 
