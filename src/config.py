@@ -56,8 +56,8 @@ class ArgusConfig:
         "translation_daily_reserve": 0.15,
 
         "analysis_per_run": 100,
-        "max_rule_recheck": 10,
-        "max_rule_refresh": 30,
+        "max_rule_recheck": 400,
+        "max_rule_refresh": 400,
 
         "max_consecutive_failures": 3,
         "quarantine_retry_hours": 24,
