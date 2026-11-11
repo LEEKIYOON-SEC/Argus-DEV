@@ -24,6 +24,8 @@ STATE_FIELDS = frozenset({
     "ai_discovered", "ai_program", "ai_detail", "ai_url", "analysis",
     "cvss", "cvss_version", "cvss_scores", "epss", "epss_percentile", "assigner",
     "tier", "fired_triggers",
+    # 번역을 시도했지만 한국어로 돌아오지 않은 제목(원문) — 같은 제목이면 다시 시도하지 않는다(main.translate_tracked).
+    "ko_tried",
 })
 
 
@@ -63,6 +65,25 @@ def build_state(cve_id: str, record: Dict, collector,
     if epss_index is not None and cve_id in epss_index:
         raw["epss"], raw["epss_percentile"] = epss_index[cve_id]
     return raw
+
+
+def retire_rejected(cve_id: str, record: Dict, db, rows: Optional["RowCache"] = None) -> bool:
+    """CVE 가 철회(REJECTED)됐으면 추적 목록에서 내린다 — 내렸으면 True.
+
+    철회된 레코드는 build_state 가 건너뛰므로, 그대로 두면 철회 전의 내용이 보존 기간(90일) 동안 화면에 남는다.
+    행은 지우지 않고 상태만 비운다(알림 이력은 남는다).
+    """
+    if ((record or {}).get("cveMetadata") or {}).get("state") != "REJECTED":
+        return False
+    row = rows.get(cve_id) if rows is not None else db.get_cve(cve_id)
+    if not (row or {}).get("last_alert_state"):
+        return False
+    if not db.blank_states([cve_id]):
+        return False
+    if rows is not None:
+        rows.forget(cve_id)
+    logger.info(f"{cve_id}: 철회(REJECTED)된 CVE — 추적 목록에서 내린다")
+    return True
 
 
 class RowCache:

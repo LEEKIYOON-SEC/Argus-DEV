@@ -534,7 +534,11 @@ def merge_exports(previous: list, fresh: list, days: int = 90, keep=None) -> lis
     return merged
 
 
-def export_stats(cve_data: list) -> dict:
+def export_stats(cve_data: list, affected: Optional[dict] = None) -> dict:
+    """affected 는 CVE 별 영향 제품 전체 — 없으면 표에 실린 것(TABLE_AFFECTED 개)만 센다.
+
+    표에 실린 것만 세면 영향 제품이 많은 CVE 가 TOP 집계에서 빠져, 눌렀을 때 나오는 목록 건수와 달랐다.
+    """
     now = dt.datetime.now(dt.timezone.utc)
 
     severity_counts = defaultdict(int)
@@ -571,7 +575,7 @@ def export_stats(cve_data: list) -> dict:
             continue
 
         seen_v, seen_p = set(), set()
-        for aff in cve.get("affected", []):
+        for aff in (affected or {}).get(cve.get("id")) or cve.get("affected", []):
             vendor, product = meaningful(aff.get("vendor")), meaningful(aff.get("product"))
             if vendor and vendor not in seen_v:
                 vendor_counts[vendor] += 1
@@ -798,7 +802,7 @@ def main(data_dir: str = None):
         print(f"  {FACTS_FILE} 는 이번 회차에 쓰지 않는다 → 배포 단계가 배포본을 이월", flush=True)
 
     print("[2/4] 통계 집계...", flush=True)
-    stats = export_stats(cve_data)
+    stats = export_stats(cve_data, {m["id"]: m["affected"] for m in merged_products})
     stats_path = os.path.join(data_dir, "stats.json")
     pages.write_json(stats_path, stats)
     print(f"  Stats → {stats_path}", flush=True)

@@ -72,6 +72,14 @@ def cache_put(name: str, content: bytes) -> None:
         logger.debug(f"캐시 쓰기 실패 ({name}): {e}")
 
 
+def cache_drop(name: str) -> None:
+    """읽을 수 없는 캐시를 지운다 — 받은 직후에 저장하므로, 깨진 응답(오류 페이지 등)이 캐시 수명 동안 남지 않게."""
+    try:
+        os.remove(os.path.join(_CACHE_DIR, name))
+    except OSError:
+        pass
+
+
 _exploitdb_index: Dict[str, Tuple[str, str]] = {}
 _exploitdb_loaded = False
 _exploitdb_ok = False
@@ -115,6 +123,8 @@ def load_exploitdb_index() -> Dict[str, Tuple[str, str]]:
             logger.info(f"  ✅ Exploit-DB 인덱스 로드 완료 ({len(_exploitdb_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ Exploit-DB CSV 파싱 실패: {e}")
+        if not _exploitdb_ok:
+            cache_drop("exploitdb-files.csv")
 
     return _exploitdb_index
 
@@ -187,6 +197,8 @@ def load_metasploit_index() -> Dict[str, List[Dict]]:
             logger.info(f"  ✅ Metasploit 인덱스 로드 완료 ({len(_msf_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ Metasploit 메타데이터 파싱 실패: {e}")
+        if not _msf_ok:
+            cache_drop("metasploit-modules.json")
 
     return _msf_index
 
@@ -253,6 +265,8 @@ def load_nuclei_index() -> Dict[str, Dict]:
             logger.info(f"  ✅ nuclei-templates 인덱스 로드 완료 ({len(_nuclei_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ nuclei-templates 파싱 실패: {e}")
+        if not _nuclei_ok:
+            cache_drop("nuclei-cves.json")
 
     return _nuclei_index
 
@@ -312,6 +326,8 @@ def load_poc_index() -> Dict[str, List[str]]:
             logger.info(f"  ✅ PoC 인덱스 로드 완료 ({len(_poc_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ PoC-in-GitHub 파싱 실패: {e}")
+        if not _poc_ok:
+            cache_drop("poc-in-github.md")
 
     return _poc_index
 
@@ -345,6 +361,7 @@ def load_cisa_kev(ttl_hours: int = 1) -> Optional[Dict[str, Dict]]:
         data = json.loads(raw.decode("utf-8", errors="ignore"))
     except ValueError as e:
         logger.error(f"CISA KEV 파싱 실패: {e}")
+        cache_drop("cisa-kev.json")
         return None
     out = {}
     for item in data.get("vulnerabilities", []) or []:
@@ -449,6 +466,7 @@ def load_vulncheck_kev(ttl_hours: int = 6) -> Optional[Dict[str, Dict]]:
             out[str(cve_id).upper()] = item
     if not out:
         logger.warning("VulnCheck KEV: 레코드를 하나도 읽지 못함 → 이번 회차 생략")
+        cache_drop("vulncheck-kev.bin")
         return None
     logger.info(f"📥 VulnCheck KEV {len(out)}건 (This product uses VulnCheck KEV)")
     return out
@@ -482,6 +500,7 @@ def load_epss_full(ttl_hours: int = 6) -> Optional[Dict[str, Tuple[float, float]
         text = gzip.decompress(raw).decode("utf-8", errors="replace")
     except Exception as e:
         logger.warning(f"EPSS 덤프 압축 해제 실패: {e}")
+        cache_drop("epss-full.csv.gz")
         return None
 
     out: Dict[str, Tuple[float, float]] = {}

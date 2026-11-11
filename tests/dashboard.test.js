@@ -38,7 +38,9 @@ const FIXED_BUGS = ['has:nuclei', 'has:edb', 'has:ransom', 'has:foo'];
 // 24시간 칸 설명은 '신규'가 아니라 '알림·갱신'. 새 값은 아래 'KPI' 테스트가 확인한다. 예전 묶음(KPI_TILES)은 그대로 비교한다.
 const CHANGED_KPI = ['stat-kev', 'stat-weapon', 'stat-24h-sub'];
 // 영향 제품 순위의 툴팁 문구만 바꿨다(말투 정리). 칸 구성 · 숫자 · 누르면 거는 필터는 그대로 비교한다.
-const noTitles = html => String(html).replace(/ title="[^"]*"/g, '');
+// 제품 이름은 이제 onclick 코드가 아니라 data-product 에 싣는다(이름의 따옴표 · 역슬래시가 코드로 읽히지 않게). 걸리는 필터는 같다.
+const noTitles = html => String(html).replace(/ title="[^"]*"/g, '')
+  .replace(/data-product="([^"]*)" onclick="filterByProduct\(this\.dataset\.product\)"/g, "onclick=\"filterByProduct('$1')\"");
 function semantic(out) {
   const o = JSON.parse(JSON.stringify(out));
   o.ui.rows = rowIds(o.ui.rows);
@@ -320,7 +322,7 @@ test('목록 — 5칸, 출처가 확인한 것만 칩, 없음 · 미확인은 �
   const d = dashboard();
   filterIds(d, '');
   const html = d.el('cve-table-body').innerHTML;
-  const row = id => html.split('<tr ').find(r => r.includes(`showDetail('${id}')`));
+  const row = id => html.split('<tr ').find(r => r.includes(`data-id="${id}"`));
   assert.equal(rowIds(html).length, 16);
   assert.equal((row(cve(1)).match(/<td /g) || []).length, 5, 'CVE · 요약·영향 제품 · CVSS·EPSS · 위협 신호 · 탐지·수정');
   assert.doesNotMatch(html, /c-lc/, '지원 상태 칸은 없다');
@@ -1096,4 +1098,53 @@ test('내보내기 스키마는 그대로 — 파생 값을 CVE 행에 섞지 �
   const json = d.run('JSON.stringify(filteredCves)');
   assert.doesNotMatch(json, /lifecycle|"entries"|"unresolved"|EXPLOITATION_CONFIRMED|correlations/);
   assert.equal(d.run('toCsv(filteredCves)').split('\n')[0], BASELINE.exports.csv.split('\n')[0]);
+});
+
+test('검색어 cwe: 는 번호가 같은 것만 — cwe:79 가 CWE-798 을 잡지 않는다', () => {
+  const d = dashboard();
+  d.run("allCves.find(c => c.id === 'CVE-2026-0005').cwe = ['CWE-798'];");
+  assert.deepEqual(search(d, 'cwe:79'), [cve(3)]);
+  assert.deepEqual(search(d, 'cwe:cwe-798'), [cve(5)]);
+  assert.deepEqual(search(d, 'cwe:7'), []);
+});
+
+test('검색어 vendor: · product: 는 이름의 공백을 빼고 견준다 — 자동 완성 값으로 찾을 수 있다', () => {
+  const d = dashboard();
+  const values = d.run("buildAffectedFilter('vendor', 'vendor-filter'); JSON.stringify(suggestValues('vendor').map(v => v[0]))");
+  assert.ok(JSON.parse(values).includes('apachesoftwarefoundation'), values);
+  assert.deepEqual(search(d, 'vendor:apachesoftwarefoundation'), [cve(8)]);
+  assert.deepEqual(search(d, 'product:windowsserver2019'), [cve(1)]);
+  assert.deepEqual(search(d, 'product:nginx'), [cve(2)], '일부만 적어도 찾는다');
+});
+
+test('제품 · 벤더 목록에서 고른 이름은 같은 이름만 — 옆에 적힌 건수와 목록 건수가 같다', () => {
+  const d = dashboard();
+  const options = JSON.parse(d.run("buildAffectedFilter('product', 'product-filter'); JSON.stringify(topNames.product)"));
+  const java = options.find(o => o.name === 'Java SE');
+  assert.equal(java.count, 2);
+  assert.deepEqual(ids(filterIds(d, "activeFilters.product = 'java se';")), [cve(6), cve(15)]);
+  assert.deepEqual(ids(filterIds(d, "activeFilters.product = 'windows server 2019';")), [cve(1)],
+                   "'Windows Server 2019 (Server Core installation)' 만 있는 CVE 는 다른 이름이다");
+  assert.deepEqual(ids(filterIds(d, "activeFilters.product = 'windows';")), [], '일부만 아는 이름은 검색어 product: 로 찾는다');
+  assert.deepEqual(ids(filterIds(d, "activeFilters.vendor = 'oracle';")), [cve(6), cve(15)]);
+});
+
+test('영향 제품 순위 — 이름을 onclick 코드에 넣지 않는다 (따옴표 · 역슬래시가 든 이름)', () => {
+  const d = dashboard();
+  d.run(`renderProductBars([{ product: "O'Reilly \\\\'); alert(1); ('", vendor: 'x', count: 3 }])`);
+  const html = d.el('product-dist').innerHTML;
+  assert.match(html, /onclick="filterByProduct\(this\.dataset\.product\)"/);
+  assert.doesNotMatch(html, /filterByProduct\('/);
+  d.run(`renderProductBars([{ product: 'a" onmouseover="alert(1)', vendor: '', count: 1 }])`);
+  assert.match(d.el('product-dist').innerHTML, /data-product="a&quot; onmouseover=&quot;alert\(1\)"/, '큰따옴표는 속성 값 안에서 이스케이프된다');
+});
+
+test('CSV — 수식으로 읽힐 칸은 앞에 작은따옴표를 붙인다', () => {
+  const d = dashboard();
+  d.run("allCves[0].title = '=HYPERLINK(\"http://x.example\",\"click\")'; allCves[1].title = '-2+3'; allCves[2].title = '@SUM(A1)';");
+  const csv = d.run('toCsv(allCves.slice(0, 4))').split('\n');
+  assert.match(csv[1], /,"'=HYPERLINK\(""http:\/\/x\.example"",""click""\)",/);
+  assert.match(csv[2], /,'-2\+3,/);
+  assert.match(csv[3], /,'@SUM\(A1\),/);
+  assert.doesNotMatch(csv[4], /,'/, '보통 글은 그대로');
 });

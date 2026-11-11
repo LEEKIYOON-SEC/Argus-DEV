@@ -62,6 +62,12 @@ def _evaluate_changes(changes: List[feed.Change], collector: Collector, db: Stor
             failed_at[change.cve_id] = change.batch_at
             continue
         if st is None:
+            try:
+                pipeline.retire_rejected(change.cve_id, change.record, db, rows)
+            except Exception as e:
+                logger.warning(f"{change.cve_id} 철회 반영 실패: {e}")
+                failed_at[change.cve_id] = change.batch_at
+                continue
             outcomes.append(pipeline.Outcome(change.cve_id, "skipped"))
             continue
 

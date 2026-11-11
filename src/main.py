@@ -113,6 +113,8 @@ def translate_tracked(db: Store, deadline_ts: float) -> int:
                 desc_ko = state.get('desc_ko') or state.get('description') or ''
                 if not (_looks_english(title_ko) or _looks_english(desc_ko)):
                     continue
+                if state.get('ko_tried') and state.get('ko_tried') == (state.get('title') or title_ko):
+                    continue  # 이 제목은 이미 시도했다 — 제목이 바뀌면 다시 본다
                 items.append({"id": row['id'],
                               "title": state.get('title') or title_ko,
                               "description": (state.get('description')
@@ -131,7 +133,14 @@ def translate_tracked(db: Store, deadline_ts: float) -> int:
                 translations = generate_korean_summaries_batch(items, deadline_ts=stop_ts)
                 for it in items:
                     tr = translations.get(it['id'])
-                    if not tr or _looks_english(tr[0]):
+                    if not tr:
+                        continue  # 응답이 없었다(한도 · 오류) — 다음 바퀴에 다시 시도
+                    if _looks_english(tr[0]):
+                        # 제품 이름뿐인 제목처럼 옮길 말이 없는 것 — 표시하지 않으면 바퀴마다 다시 보내 한도를 쓴다.
+                        patch = {"ko_tried": it['title']}
+                        if tr[1] and not _looks_english(tr[1]):
+                            patch["desc_ko"] = tr[1]
+                        db.patch_states([{"id": it['id'], "patch": patch}], "번역 표시")
                         continue
                     if db.update_translation(it['id'], tr[0], tr[1]):
                         done += 1
@@ -693,6 +702,9 @@ def main() -> None:
     except Exception as e:
         logger.error(f"bulk-lane 최상위 실패: {e}", exc_info=True)
         _notify_pipeline_failure(e)
+        # 예외를 삼키면 실행이 초록으로 끝나 실패가 Actions 목록에 보이지 않는다.
+        # export · 배포 단계는 if: always() 라 이 단계가 실패해도 이어서 돈다.
+        raise
 
 
 if __name__ == "__main__":

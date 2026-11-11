@@ -83,6 +83,38 @@ class RetryQuarantinedTests(unittest.TestCase):
         self.assertEqual([(c.cve_id, c.batch_at) for c in out], [("CVE-3", T1), ("CVE-1", T2)])
 
 
+class RetireRejectedTests(unittest.TestCase):
+    """철회된 CVE 는 추적 목록에서 내린다"""
+
+    class DB:
+        def __init__(self, rows):
+            self.rows, self.blanked = rows, []
+
+        def get_cve(self, cve_id):
+            return self.rows.get(cve_id)
+
+        def blank_states(self, ids):
+            self.blanked += list(ids)
+            return len(ids)
+
+    def record(self, state):
+        return {"cveMetadata": {"cveId": "CVE-1", "state": state}}
+
+    def test_rejected_tracked_row_is_blanked(self):
+        db = self.DB({"CVE-1": {"id": "CVE-1", "last_alert_state": {"tier": "T2"}}})
+        self.assertTrue(fast_lane.pipeline.retire_rejected("CVE-1", self.record("REJECTED"), db))
+        self.assertEqual(db.blanked, ["CVE-1"])
+
+    def test_published_reserved_or_untracked_are_left_alone(self):
+        db = self.DB({"CVE-1": {"id": "CVE-1", "last_alert_state": {"tier": "T2"}},
+                      "CVE-2": {"id": "CVE-2", "last_alert_state": None}})
+        self.assertFalse(fast_lane.pipeline.retire_rejected("CVE-1", self.record("PUBLISHED"), db))
+        self.assertFalse(fast_lane.pipeline.retire_rejected("CVE-1", self.record("RESERVED"), db))
+        self.assertFalse(fast_lane.pipeline.retire_rejected("CVE-2", self.record("REJECTED"), db))
+        self.assertFalse(fast_lane.pipeline.retire_rejected("CVE-3", self.record("REJECTED"), db))
+        self.assertEqual(db.blanked, [])
+
+
 class CatchupHorizonTests(unittest.TestCase):
     def test_empty_catchup_window_moves_to_its_end(self):
         now = datetime.datetime(2026, 11, 11, 12, 0, tzinfo=UTC)

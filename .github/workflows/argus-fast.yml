@@ -27,9 +27,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Resolve cache day
+      # 키가 이미 있으면 actions/cache 는 다시 저장하지 않는다. 날짜 키로는 그날 첫 실행의 파일만 남아
+      # 수명이 1~6시간인 캐시(KEV · EPSS)를 남은 하루 동안 매 실행 다시 받았다 — 시간 단위로 저장한다.
+      - name: Resolve cache hour
         id: cacheday
-        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: echo "day=$(date -u +%Y-%m-%d-%H)" >> "$GITHUB_OUTPUT"
 
       - name: Cache signal indexes
         uses: actions/cache@v4
