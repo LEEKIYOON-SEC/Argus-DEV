@@ -49,17 +49,26 @@ def memo_ok(fn):
     return wrapper
 
 
-def cache_get(name: str, ttl_hours: int = _CACHE_TTL_HOURS) -> Optional[bytes]:
+def cache_get(name: str, ttl_hours: int = _CACHE_TTL_HOURS,
+              since: Optional[float] = None) -> Optional[bytes]:
+    """캐시 파일 — ttl_hours 안에 받은 것, since 를 주면 그 시각 이후에 받은 것만."""
     path = os.path.join(_CACHE_DIR, name)
     try:
         if os.path.exists(path):
-            age = time.time() - os.path.getmtime(path)
-            if age < ttl_hours * 3600:
+            mtime = os.path.getmtime(path)
+            fresh = mtime >= since if since is not None else time.time() - mtime < ttl_hours * 3600
+            if fresh:
                 with open(path, "rb") as f:
                     return f.read()
     except OSError as e:
         logger.debug(f"캐시 읽기 실패 ({name}): {e}")
     return None
+
+
+def this_hour_start(now: Optional[float] = None) -> float:
+    """지금 UTC 시(時)의 시작 시각 — Actions 캐시 키(date -u +%Y-%m-%d-%H)와 같은 단위."""
+    t = time.time() if now is None else now
+    return t - (t % 3600)
 
 
 def cache_put(name: str, content: bytes) -> None:
@@ -286,9 +295,14 @@ def nuclei_template_url(path: str) -> str:
 
 
 _poc_index: Dict[str, List[str]] = {}
+# README 제목 옆 날짜 — PoC-in-GitHub 가 적어 둔 CVE 공개일. 아직 못 받았으면(공개 직후 · 공개 전) 없다.
+_poc_dates: Dict[str, str] = {}
 _poc_loaded = False
 _poc_ok = False
-_POC_BLOCK = re.compile(rf"^### ({CVE_RE.pattern})", re.M)
+# 블록 경계는 모든 '### ' 제목이다. CVE 형식인 제목만 색인한다 — 'CVE-2026-30' 처럼 번호가 틀린 제목을 경계로
+# 보지 않으면 그 아래 링크가 바로 앞 CVE 에 붙었다(실측 11건, 예: CVE-2024-0986 에 PAN-OS 익스플로잇 링크).
+_POC_BOUNDARY = re.compile(r"^### ", re.M)
+_POC_HEAD = re.compile(rf"### ({CVE_RE.pattern})(?: \((\d{{4}}-\d{{2}}-\d{{2}})\))?")
 _POC_LINK = re.compile(r"https://github\.com/[^\s\)\]]+")
 
 
@@ -299,7 +313,11 @@ def load_poc_index() -> Dict[str, List[str]]:
             return _poc_index
         _poc_loaded = True
 
-        raw = cache_get("poc-in-github.md")
+        # PoC 는 레코드를 판정하는 그 순간의 색인으로 확인한다 — 24시간 묵을 수 있는 색인이면 공개 전에 이미
+        # 올라온 PoC 도 놓칠 수 있다(CVE-2026-114938: PoC 가 공개 6시간 전에 있었는데 판정 때 색인에 없었다).
+        # 이번 시(時)에 받은 것만 쓰고, 시간 단위 Actions 캐시 키와 맞물려 레인마다 한 시간에 한 번 받는다.
+        # 날짜 단위 키에 이 규칙을 쓰면 5분 회차마다 7.5MB 를 다시 받는다.
+        raw = cache_get("poc-in-github.md", since=this_hour_start())
         if raw is None:
             logger.info("📥 PoC-in-GitHub 인덱스 다운로드 중...")
             try:
@@ -317,11 +335,18 @@ def load_poc_index() -> Dict[str, List[str]]:
             logger.info("📥 PoC-in-GitHub 인덱스 캐시 로드")
 
         try:
-            parts = _POC_BLOCK.split(raw.decode("utf-8", errors="ignore"))
-            for i in range(1, len(parts) - 1, 2):
-                urls = _POC_LINK.findall(parts[i + 1])
+            text = raw.decode("utf-8", errors="ignore")
+            starts = [b.start() for b in _POC_BOUNDARY.finditer(text)] + [len(text)]
+            for start, end in zip(starts, starts[1:]):
+                m = _POC_HEAD.match(text, start)
+                if not m:
+                    continue
+                urls = _POC_LINK.findall(text, m.end(), end)
                 if urls:
-                    _poc_index[parts[i].upper()] = urls[:3]
+                    cve_id = m.group(1).upper()
+                    _poc_index[cve_id] = urls[:3]
+                    if m.group(2):
+                        _poc_dates[cve_id] = m.group(2)
             _poc_ok = bool(_poc_index)
             logger.info(f"  ✅ PoC 인덱스 로드 완료 ({len(_poc_index)}개 CVE 매핑)")
         except Exception as e:
@@ -340,6 +365,12 @@ def poc_ok() -> bool:
 def poc_urls(cve_id: str) -> List[str]:
     load_poc_index()
     return _poc_index.get(cve_id.upper(), [])
+
+
+def poc_dates() -> Dict[str, str]:
+    """PoC 색인에 있는 CVE 의 공개일(README 표기) — 날짜가 없는 CVE 는 빠져 있다."""
+    load_poc_index()
+    return _poc_dates
 
 
 @memo_ok

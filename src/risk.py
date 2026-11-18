@@ -93,6 +93,9 @@ WEAPONIZABLE_CWE: FrozenSet[str] = frozenset({
     "CWE-98",
     "CWE-22",
     "CWE-287",
+    # 대체 경로 인증 우회 — 지난 1년 KEV(원격·무인증) 9건이 7개 CNA 에서 나왔고, 걸리는 CVE 대비 KEV 비율이
+    # 목록 평균의 약 2.7배다(실측 2026-11-18, INVARIANTS §2). 287 · 306 과 같은 사전인증 우회 계열이다.
+    "CWE-288",
     "CWE-306",
     "CWE-434",
     "CWE-502",
