@@ -37,7 +37,9 @@ const SORTS = [
 ];
 
 function rowIds(html) {
-  return [...String(html).matchAll(/showDetail\('([^']+)'\)/g)].map(m => m[1]);
+  // 기준 파일(변경 전 HTML)은 onclick="showDetail('ID')", 지금은 ID 를 data-id 에만 두고 onclick 이 그것을 읽는다.
+  const old = [...String(html).matchAll(/showDetail\('([^']+)'\)/g)].map(m => m[1]);
+  return old.length ? old : [...String(html).matchAll(/<tr [^>]*data-id="([^"]+)"[^>]*onclick="showDetail\(this\.dataset\.id\)"/g)].map(m => m[1]);
 }
 
 function capture(dash, code) {

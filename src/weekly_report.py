@@ -32,20 +32,24 @@ def _issue_exists(repo: str, token: str, title: str) -> bool:
     return any((it.get("title") or "") == title for it in (resp.json() or []))
 
 
-def _in_week(entry: Dict, start: datetime.date, end: datetime.date) -> bool:
-    d = (entry.get("date") or "")[:10]
-    if not d:
-        return False
+def _in_range(value, start: datetime.date, end: datetime.date) -> bool:
     try:
-        day = datetime.date.fromisoformat(d)
+        day = datetime.date.fromisoformat(str(value or "")[:10])
     except ValueError:
         return False
     return start <= day <= end
 
 
+def _in_week(entry: Dict, start: datetime.date, end: datetime.date) -> bool:
+    return _in_range(entry.get("date"), start, end)
+
+
 def build_weekly_body(week_cves: List[Dict], week_label: str,
                       start: datetime.date, end: datetime.date) -> str:
     total = len(week_cves)
+    # date 는 마지막 알림 시각(없으면 마지막 저장 시각)이다 — 처음 추적한 날이 아니라서 '신규'라고 세면
+    # 레코드가 다시 저장된 옛 CVE 까지 들어간다. 이번 주에 공개된 것을 따로 센다.
+    published = [c for c in week_cves if _in_range(c.get("published"), start, end)]
     critical = [c for c in week_cves if (c.get("cvss") or 0) >= 9.0]
     kev = [c for c in week_cves if c.get("is_kev")]
     weaponized = [c for c in week_cves if c.get("has_metasploit_module") or c.get("has_public_exploit")]
@@ -69,7 +73,7 @@ def build_weekly_body(week_cves: List[Dict], week_label: str,
         if c.get("has_metasploit_module"): sig.append("무기화")
         if c.get("has_public_exploit"): sig.append("EDB")
         if c.get("has_poc"): sig.append("PoC")
-        title = (c.get("title") or "")[:60]
+        title = (c.get("title") or "")[:60].replace("|", "\\|").replace("\n", " ")
         link = c["id"]
         return f"| {sev} | {link} | {c.get('cvss', 0)} | {', '.join(sig) or '–'} | {title} |"
 
@@ -94,7 +98,8 @@ def build_weekly_body(week_cves: List[Dict], week_label: str,
         "",
         "| 항목 | 건수 |",
         "| :--- | ---: |",
-        f"| 신규 추적 CVE | **{total}** |",
+        f"| 이번 주에 알렸거나 갱신된 추적 CVE | **{total}** |",
+        f"| 그중 이번 주에 공개된 CVE | {len(published)} |",
         f"| 🔴 Critical (CVSS 9+) | {len(critical)} |",
         f"| 🚨 CISA KEV 등재 | {len(kev)} |",
         f"| 🧨 무기화 (Metasploit·ExploitDB) | {len(weaponized)} |",

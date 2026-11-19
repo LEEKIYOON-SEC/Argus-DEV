@@ -1,5 +1,6 @@
 import requests
 import os
+import re
 import time
 import threading
 from typing import Dict, List, Optional
@@ -14,14 +15,40 @@ class NotifierError(Exception):
     pass
 
 
+# Slack 한도 — section 글 3000자 · header 150자 · 버튼 URL 3000자. 넘으면 메시지 전체가 400 으로 거부된다.
+_SECTION_MAX = 2900
+_HEADER_MAX = 150
+_URL_MAX = 3000
+_FENCE = "`" * 3
+
+
+def esc(text) -> str:
+    """mrkdwn 에 넣을 바깥 글(제목 · 제품 · 룰 본문) — Slack 이 요구하는 세 글자만 바꾼다."""
+    return str(text if text is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def clip(text: str, limit: int) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def http_url(url) -> str:
+    """버튼 · 링크에 쓸 수 있는 주소만 돌려준다 — http(s) 이고 공백 · 꺾쇠 · 세로줄이 없고 한도 안."""
+    url = str(url or "").strip()
+    if not re.match(r"^https?://[^\s<>|]+$", url, re.I) or len(url) > _URL_MAX:
+        return ""
+    return url
+
+
 def _rule_block(label: str, rule: Dict) -> str:
-    head = f"*🟢 {label}* ({rule.get('source', '')})"
+    head = f"*🟢 {esc(label)}* ({esc(rule.get('source', ''))})"
     code = str(rule.get('code') or '').strip()
     if not code:
-        url = rule.get('url') or ''
+        url = http_url(rule.get('url'))
         return f"{head}\n<{url}|원문 보기>" if url else head
     preview = code[:800] + "\n..." if len(code) > 800 else code
-    return f"{head}\n```{preview}```"
+    preview = esc(preview).replace(_FENCE, "` ` `")  # 본문 안의 코드 울타리가 블록을 닫지 않게
+    return f"{head}\n{_FENCE}{preview}{_FENCE}"
 
 
 class SlackNotifier:
@@ -45,6 +72,11 @@ class SlackNotifier:
         for attempt in range(attempts):
             try:
                 response = requests.post(self.webhook_url, json=payload, timeout=10)
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    # 내용이 잘못된 메시지(invalid_blocks 등)는 다시 보내도 같다.
+                    logger.error(f"{context} 전송 거부 (HTTP {response.status_code}): "
+                                 f"{str(response.text)[:200]}")
+                    return False
                 response.raise_for_status()
                 return True
             except requests.exceptions.RequestException as e:
@@ -148,8 +180,8 @@ class SlackNotifier:
             title = cve_data.get('title_ko') or cve_data.get('title') or 'N/A'
             head = "🚨 즉시 대응" if tier == risk.T0 else "⚠️ 높음"
 
-            lines = [f"*{title}*", ""]
-            lines.append(f"*무엇이 바뀌었나* · {reason}")
+            lines = [f"*{esc(clip(title, 300))}*", ""]
+            lines.append(f"*무엇이 바뀌었나* · {esc(reason)}")
 
             affected = [a for a in (cve_data.get('affected') or []) if isinstance(a, dict)]
             if affected:
@@ -160,8 +192,9 @@ class SlackNotifier:
                     versions = str(a.get('versions') or '').strip()
                     name = f"{vendor} {product}".strip() or product or vendor
                     if name and name.lower() not in ('unknown', 'n/a'):
-                        shown.append(f"{name}" + (f" ({versions})" if versions and
-                                                  versions != '정보 없음' else ""))
+                        shown.append(esc(clip(name, 120))
+                                     + (f" ({esc(clip(versions, 200))})" if versions and
+                                        versions != '정보 없음' else ""))
                 if shown:
                     more = f" 외 {len(affected) - len(shown)}건" if len(affected) > len(shown) else ""
                     lines.append(f"*영향* · {' / '.join(shown)}{more}")
@@ -180,12 +213,13 @@ class SlackNotifier:
 
             due = cve_data.get('kev_due_date')
             if due:
-                lines.append(f"*CISA 조치 기한* · {due}")
+                lines.append(f"*CISA 조치 기한* · {esc(due)}")
 
             blocks = [
                 {"type": "header",
-                 "text": {"type": "plain_text", "text": f"{head}: {cve_id}"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+                 "text": {"type": "plain_text", "text": clip(f"{head}: {cve_id}", _HEADER_MAX)}},
+                {"type": "section",
+                 "text": {"type": "mrkdwn", "text": clip("\n".join(lines), _SECTION_MAX)}},
             ]
 
             elements = []
@@ -197,11 +231,13 @@ class SlackNotifier:
             elements.append({"type": "button",
                              "text": {"type": "plain_text", "text": "CVE 원문"},
                              "url": f"https://www.cve.org/CVERecord?id={cve_id}"})
-            refs = [r for r in (cve_data.get('references') or []) if r]
-            if refs:
+            # 참고 링크는 CVE 레코드에 적힌 그대로다 — 주소 꼴이 아닌 것이 하나 섞여도 알림 전체가 거부된다.
+            # 첫 링크가 벤더 권고라는 보장이 없어 '참고 링크'라고 적는다.
+            ref = next((u for u in map(http_url, cve_data.get('references') or []) if u), "")
+            if ref:
                 elements.append({"type": "button",
-                                 "text": {"type": "plain_text", "text": "벤더 권고"},
-                                 "url": refs[0]})
+                                 "text": {"type": "plain_text", "text": "참고 링크"},
+                                 "url": ref})
             blocks.append({"type": "actions", "elements": elements[:3]})
 
             credits = ["출처: CISA KEV · EPSS(FIRST.org)"]
@@ -255,13 +291,14 @@ class SlackNotifier:
                 items = []
                 for r in rows[:8]:
                     link = f" <{r['url']}|상세>" if r.get('url') else ""
-                    items.append(f"• `{r['id']}` {r.get('reason', '')}"
-                                 f" — {str(r.get('title_ko', ''))[:48]}{link}")
+                    items.append(f"• `{r['id']}` {esc(clip(r.get('reason', ''), 160))}"
+                                 f" — {esc(str(r.get('title_ko', ''))[:48])}{link}")
                 if len(rows) > 8:
                     items.append(f"  … 외 {len(rows) - 8}건")
                 blocks.append({"type": "divider"})
                 blocks.append({"type": "section",
-                               "text": {"type": "mrkdwn", "text": "\n".join(items)}})
+                               "text": {"type": "mrkdwn",
+                                        "text": clip("\n".join(items), _SECTION_MAX)}})
 
             if dashboard_url:
                 blocks.append({"type": "actions", "elements": [
@@ -285,8 +322,10 @@ class SlackNotifier:
         try:
             return self._send_slack_with_retry({
                 "blocks": [
-                    {"type": "header", "text": {"type": "plain_text", "text": title}},
-                    {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+                    {"type": "header",
+                     "text": {"type": "plain_text", "text": clip(title, _HEADER_MAX)}},
+                    {"type": "section",
+                     "text": {"type": "mrkdwn", "text": clip(detail, _SECTION_MAX)}},
                 ]
             }, "파이프라인 경고")
         except Exception as e:
@@ -297,8 +336,8 @@ class SlackNotifier:
     def send_official_rule_update(self, cve_id: str, title: str, rules_info: Dict, dashboard_url: Optional[str] = None) -> bool:
         try:
             blocks = [
-                {"type": "header", "text": {"type": "plain_text", "text": f"✅ 공식 룰 발견: {cve_id}"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\n\n이전 리포트에 공개 탐지 룰이 없던 취약점에 대해 *공식 검증된 룰*이 새로 발견되었습니다."}},
+                {"type": "header", "text": {"type": "plain_text", "text": clip(f"✅ 공식 룰 발견: {cve_id}", _HEADER_MAX)}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{esc(clip(title, 300))}*\n\n이전 리포트에 공개 탐지 룰이 없던 취약점에 대해 *공식 검증된 룰*이 새로 발견되었습니다."}},
                 {"type": "divider"}
             ]
 

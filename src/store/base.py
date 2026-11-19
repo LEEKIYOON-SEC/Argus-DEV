@@ -25,6 +25,15 @@ class Store(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def patch_states(self, updates: List[Dict], label: str = "상태") -> int:
+        """저장된 상태에서 일부 키만 바꾼다 — updates 는 {"id", "patch": {키: 값}, (그 밖의 열)}.
+
+        상태를 읽고 → 오래 걸리는 일을 하고 → 통째로 다시 쓰면 그 사이 fast-lane 이 바꾼 값
+        (발화 이력 · 등급 · KEV)이 옛 값으로 되돌아간다. 백필은 자기가 만든 키만 쓴다.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def count_tracked(self) -> int:
         raise NotImplementedError
 
@@ -94,6 +103,14 @@ class Store(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def has_full_export_flag(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def clear_full_export_flag(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def export_rows(self, since: Optional[str], days: int = 90) -> List[Dict]:
         raise NotImplementedError
 
@@ -107,8 +124,8 @@ class Store(ABC):
 
     @abstractmethod
     def retention_rows(self, before: str, limit: int, *, tracked: bool = False,
-                       unalerted: bool = False, oldest_first: bool = False
-                       ) -> List[Dict]:
+                       unalerted: bool = False, oldest_first: bool = False,
+                       offset: int = 0) -> List[Dict]:
         raise NotImplementedError
 
     @abstractmethod

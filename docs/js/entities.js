@@ -75,7 +75,7 @@
                   role: '공격 모듈 이름 · 등급', cadence: '매일',
                   terms: [{ label: 'BSD-3-Clause', url: URL_LICENSE.msf }] },
     'poc-in-github': { provides: ['exploit'], name: 'PoC-in-GitHub', provider: 'nomi-sec', url: CTX.URL.poc, kind: 'source',
-                       role: '공개 PoC 저장소 링크', cadence: '매일',
+                       role: '공개 PoC 저장소 링크', cadence: '매시',
                        terms: [{ label: 'CC0 1.0', url: URL_LICENSE.poc }] },
     sigma: { provides: ['detection'], name: 'SigmaHQ', provider: '', url: 'https://github.com/SigmaHQ/sigma', kind: 'source',
              role: '로그 탐지 룰', cadence: '매주',

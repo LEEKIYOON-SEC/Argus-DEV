@@ -167,36 +167,33 @@ class RuleManagerTests(unittest.TestCase):
         self.assertTrue(rules["yara"]["link_only"])
         self.assertNotIn("code", rules["yara"])
 
-    def test_network_rules_take_one_per_engine_first(self):
-        # 색인은 Snort Community 를 ET Open 앞에 둔다. 앞에서부터 3건을 고르던 때는 같은 엔진이 자리를 채워, 2026-10-22 운영
-        # 데이터로 이미 룰이 있던 CVE 를 다시 만들면 113곳에서 화면의 엔진(주로 Suricata)이 빠졌다.
+    def test_snapshot_keeps_every_indexed_network_rule(self):
+        # 2026-10-22 운영: CVE 당 3건으로 자르던 때는 CVE-2026-109619 의 Snort 2.9 sid 67375 · Snort 3 sid 67360 · 67375 가
+        # 화면에 나오지 않았다(대시보드 CVE 432건 · 룰 1,814개). 색인이 엔진마다 3건까지 담아 다 실어도 CVE 당 12건까지다.
         def net(engine, source, sid):
             return {"engine": engine, "source": source, "url": "", "path": f"{source}:sid{sid}",
                     "code": f'alert tcp any any -> any any (msg:"x"; sid:{sid}; rev:1;)'}
 
         index = {
-            "CVE-2026-109618": [net("snort2", "Snort 2.9 Community", 67359), net("snort2", "Snort 2.9 Community", 67375),
-                                net("snort3", "Snort 3 Community", 67359), net("snort3", "Snort 3 Community", 67375)],
+            "CVE-2026-109619": [net("snort2", "Snort 2.9 Community", sid) for sid in (67359, 67360, 67375)]
+                               + [net("snort3", "Snort 3 Community", sid) for sid in (67359, 67360, 67375)],
             "CVE-2009-1151": [net("snort3", "Snort 3 Community", 2281), net("snort2", "Snort 2.9 ET Open", 2010902),
-                              net("snort2", "Snort 2.9 ET Open", 2010903), net("suricata5", "Suricata 5 ET Open", 2010902),
+                              net("suricata5", "Suricata 5 ET Open", 2010902), net("snort2", "Snort 2.9 ET Open", 2010903),
                               net("suricata7", "Suricata 7 ET Open", 2010902)],
-            "CVE-2010-3333": [net("snort2", "Snort 2.9 ET Open", sid) for sid in (2020699, 2016932, 2016933)]
-                             + [net("suricata5", "Suricata 5 ET Open", 2020699)],
-            "CVE-2016-0001": [net("snort2", "Snort 2.9 ET Open", sid) for sid in (2000001, 2000002, 2000003, 2000004)],
         }
         with mock.patch.object(rm, "_index", return_value=index), \
                 mock.patch.object(rm.requests, "get", side_effect=AssertionError("본문은 색인에 있다")):
             picked = {cve: [rm.rule_key(r) for r in rm.RuleManager().search_public_only(cve)[0]["network"]]
                       for cve in index}
-        self.assertEqual(picked["CVE-2026-109618"], [("snort2", "Snort 2.9 Community:sid67359"),
-                                                     ("snort3", "Snort 3 Community:sid67359"),
-                                                     ("snort2", "Snort 2.9 Community:sid67375")])
-        self.assertEqual([e for e, _ in picked["CVE-2009-1151"]], ["snort3", "snort2", "suricata5", "suricata7"],
-                         "엔진이 넷이면 넷 다 싣는다")
-        self.assertEqual(picked["CVE-2010-3333"], [("snort2", "Snort 2.9 ET Open:sid2020699"),
-                                                   ("suricata5", "Suricata 5 ET Open:sid2020699"),
-                                                   ("snort2", "Snort 2.9 ET Open:sid2016932")])
-        self.assertEqual(len(picked["CVE-2016-0001"]), 3, "엔진이 하나면 앞에서부터 3건")
+        self.assertEqual(picked["CVE-2026-109619"],
+                         [("snort2", f"Snort 2.9 Community:sid{sid}") for sid in (67359, 67360, 67375)]
+                         + [("snort3", f"Snort 3 Community:sid{sid}") for sid in (67359, 67360, 67375)])
+        self.assertEqual(picked["CVE-2009-1151"], [("snort3", "Snort 3 Community:sid2281"),
+                                                   ("snort2", "Snort 2.9 ET Open:sid2010902"),
+                                                   ("snort2", "Snort 2.9 ET Open:sid2010903"),
+                                                   ("suricata5", "Suricata 5 ET Open:sid2010902"),
+                                                   ("suricata7", "Suricata 7 ET Open:sid2010902")],
+                         "엔진별로 묶는다 — 엔진 순서는 색인에 처음 나온 순서")
 
 
 class RuleIndexTests(unittest.TestCase):

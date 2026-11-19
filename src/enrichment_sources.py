@@ -1,3 +1,4 @@
+import collections
 import csv
 import functools
 import io
@@ -49,17 +50,26 @@ def memo_ok(fn):
     return wrapper
 
 
-def cache_get(name: str, ttl_hours: int = _CACHE_TTL_HOURS) -> Optional[bytes]:
+def cache_get(name: str, ttl_hours: int = _CACHE_TTL_HOURS,
+              since: Optional[float] = None) -> Optional[bytes]:
+    """캐시 파일 — ttl_hours 안에 받은 것, since 를 주면 그 시각 이후에 받은 것만."""
     path = os.path.join(_CACHE_DIR, name)
     try:
         if os.path.exists(path):
-            age = time.time() - os.path.getmtime(path)
-            if age < ttl_hours * 3600:
+            mtime = os.path.getmtime(path)
+            fresh = mtime >= since if since is not None else time.time() - mtime < ttl_hours * 3600
+            if fresh:
                 with open(path, "rb") as f:
                     return f.read()
     except OSError as e:
         logger.debug(f"캐시 읽기 실패 ({name}): {e}")
     return None
+
+
+def this_hour_start(now: Optional[float] = None) -> float:
+    """지금 UTC 시(時)의 시작 시각 — Actions 캐시 키(date -u +%Y-%m-%d-%H)와 같은 단위."""
+    t = time.time() if now is None else now
+    return t - (t % 3600)
 
 
 def cache_put(name: str, content: bytes) -> None:
@@ -70,6 +80,14 @@ def cache_put(name: str, content: bytes) -> None:
             f.write(content)
     except OSError as e:
         logger.debug(f"캐시 쓰기 실패 ({name}): {e}")
+
+
+def cache_drop(name: str) -> None:
+    """읽을 수 없는 캐시를 지운다 — 받은 직후에 저장하므로, 깨진 응답(오류 페이지 등)이 캐시 수명 동안 남지 않게."""
+    try:
+        os.remove(os.path.join(_CACHE_DIR, name))
+    except OSError:
+        pass
 
 
 _exploitdb_index: Dict[str, Tuple[str, str]] = {}
@@ -115,6 +133,8 @@ def load_exploitdb_index() -> Dict[str, Tuple[str, str]]:
             logger.info(f"  ✅ Exploit-DB 인덱스 로드 완료 ({len(_exploitdb_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ Exploit-DB CSV 파싱 실패: {e}")
+        if not _exploitdb_ok:
+            cache_drop("exploitdb-files.csv")
 
     return _exploitdb_index
 
@@ -187,6 +207,8 @@ def load_metasploit_index() -> Dict[str, List[Dict]]:
             logger.info(f"  ✅ Metasploit 인덱스 로드 완료 ({len(_msf_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ Metasploit 메타데이터 파싱 실패: {e}")
+        if not _msf_ok:
+            cache_drop("metasploit-modules.json")
 
     return _msf_index
 
@@ -253,6 +275,8 @@ def load_nuclei_index() -> Dict[str, Dict]:
             logger.info(f"  ✅ nuclei-templates 인덱스 로드 완료 ({len(_nuclei_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ nuclei-templates 파싱 실패: {e}")
+        if not _nuclei_ok:
+            cache_drop("nuclei-cves.json")
 
     return _nuclei_index
 
@@ -272,10 +296,65 @@ def nuclei_template_url(path: str) -> str:
 
 
 _poc_index: Dict[str, List[str]] = {}
+# README 제목 옆 날짜 — PoC-in-GitHub 가 적어 둔 CVE 공개일. 아직 못 받았으면(공개 직후 · 공개 전) 없다.
+_poc_dates: Dict[str, str] = {}
 _poc_loaded = False
 _poc_ok = False
-_POC_BLOCK = re.compile(rf"^### ({CVE_RE.pattern})", re.M)
+# 블록 경계는 모든 '### ' 제목이다. CVE 형식인 제목만 색인한다 — 'CVE-2026-30' 처럼 번호가 틀린 제목을 경계로
+# 보지 않으면 그 아래 링크가 바로 앞 CVE 에 붙었다(실측 11건, 예: CVE-2024-0986 에 PAN-OS 익스플로잇 링크).
+_POC_BOUNDARY = re.compile(r"^### ", re.M)
+_POC_HEAD = re.compile(rf"### ({CVE_RE.pattern})(?: \((\d{{4}}-\d{{2}}-\d{{2}})\))?")
 _POC_LINK = re.compile(r"https://github\.com/[^\s\)\]]+")
+# 저장소 줄 '- [owner/repo](https://github.com/owner/repo)' — 저장소 수와 별칭은 이 줄만 센다(설명 속 링크는 빼고).
+_POC_REPO = re.compile(r"^- \[[^\]]*\]\(https://github\.com/([^/\s\)]+)/([^/\s\)]+)\)", re.M)
+_poc_counts: Dict[str, int] = {}
+_poc_nicks: Dict[str, List[Tuple[str, int]]] = {}     # CVE → [(key, 그 이름을 쓴 서로 다른 주인 수)]
+# 별칭 표기는 CVE 마다 고르지 않고 색인 전체에서 고른다 — 같은 이름이 CVE 마다 WP2Shell · Wp2Shell 로 갈리지 않게.
+_nick_spell: Dict[str, "collections.Counter"] = collections.defaultdict(collections.Counter)
+
+# 별칭 — 'PHP2Shell · Java4Shell' 꼴(화제가 된 취약점에 붙는 이름). CVE 레코드에는 이런 이름이 없고 PoC 저장소 ·
+# 탐지 템플릿 이름에만 나온다(실측 2026-11-19). 앞부분은 글자로 시작하고 글자로 끝나야 한다 — Metasploit 페이로드
+# 이름(aarch64shell · x64shell)이 4shell 로 읽히지 않게. 'Log4ShellScanner' 처럼 대문자로 이어 붙인 이름은 잡고,
+# 'log4shells' 처럼 소문자가 이어지면 다른 낱말로 본다.
+_NICK = re.compile(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,18}[A-Za-z])[-_ ]?([24])[-_ ]?shell(?!(?-i:[a-z0-9]))", re.I)
+# 서로 다른 저장소 주인이 이만큼 같은 이름을 써야 별칭으로 본다 — 한두 명이 엉뚱한 CVE 에 붙인 이름을 거른다
+# (예: php2shell 이 CVE-2025-55182 · CVE-2024-4577 에 한 명씩). 실측에서 3명 이상은 13건이었고 철회 1건 말고 모두 T0/T1.
+NICKNAME_MIN_OWNERS = 3
+NICKNAME_MAX = 3
+
+
+def nickname_parts(text: str) -> List[Tuple[str, str]]:
+    """글에서 별칭 후보 — (key, 쓴 대로의 앞부분과 숫자). key 는 소문자('php2shell'), 둘째는 'PHP2' 처럼."""
+    return [(f"{m.group(1).lower()}{m.group(2)}shell", f"{m.group(1)}{m.group(2)}") for m in _NICK.finditer(text or "")]
+
+
+def _nick_display(spellings: "collections.Counter") -> str:
+    """가장 많이 쓴 표기 — 대문자가 섞인 표기(PHP2 · Java4)를 먼저 고르고, 없으면 첫 글자만 대문자로."""
+    cased = [(n, s) for s, n in spellings.items() if any(ch.isupper() for ch in s)]
+    if cased:
+        return f"{max(cased)[1]}Shell"
+    best = max((n, s) for s, n in spellings.items())[1]
+    return f"{best[:1].upper()}{best[1:]}Shell"
+
+
+def _nicknames_of(repos: List[Tuple[str, str]]) -> List[Tuple[str, int]]:
+    """저장소(주인, 이름) 목록에서 별칭 — (key, 그 이름을 쓴 서로 다른 주인 수), 많이 쓴 순.
+    표기는 색인 전체에 모아(_nick_spell) nickname_display 가 고른다."""
+    owners: Dict[str, set] = collections.defaultdict(set)
+    for owner, repo in repos:
+        for key, shown in nickname_parts(repo):
+            owners[key].add(owner.lower())
+            _nick_spell[key][shown] += 1
+    found = sorted(((len(o), key) for key, o in owners.items() if len(o) >= NICKNAME_MIN_OWNERS),
+                   key=lambda x: (-x[0], x[1]))
+    return [(key, n) for n, key in found[:NICKNAME_MAX]]
+
+
+def nickname_display(key: str) -> str:
+    """별칭 key('wp2shell')의 표기 — PoC 저장소 이름에서 가장 많이 쓴 것. 색인에 없으면 빈 글."""
+    load_poc_index()
+    spellings = _nick_spell.get(key)
+    return _nick_display(spellings) if spellings else ""
 
 
 def load_poc_index() -> Dict[str, List[str]]:
@@ -285,7 +364,11 @@ def load_poc_index() -> Dict[str, List[str]]:
             return _poc_index
         _poc_loaded = True
 
-        raw = cache_get("poc-in-github.md")
+        # PoC 는 레코드를 판정하는 그 순간의 색인으로 확인한다 — 24시간 묵을 수 있는 색인이면 공개 전에 이미
+        # 올라온 PoC 도 놓칠 수 있다(CVE-2026-114938: PoC 가 공개 6시간 전에 있었는데 판정 때 색인에 없었다).
+        # 이번 시(時)에 받은 것만 쓰고, 시간 단위 Actions 캐시 키와 맞물려 레인마다 한 시간에 한 번 받는다.
+        # 날짜 단위 키에 이 규칙을 쓰면 5분 회차마다 7.5MB 를 다시 받는다.
+        raw = cache_get("poc-in-github.md", since=this_hour_start())
         if raw is None:
             logger.info("📥 PoC-in-GitHub 인덱스 다운로드 중...")
             try:
@@ -303,15 +386,30 @@ def load_poc_index() -> Dict[str, List[str]]:
             logger.info("📥 PoC-in-GitHub 인덱스 캐시 로드")
 
         try:
-            parts = _POC_BLOCK.split(raw.decode("utf-8", errors="ignore"))
-            for i in range(1, len(parts) - 1, 2):
-                urls = _POC_LINK.findall(parts[i + 1])
+            text = raw.decode("utf-8", errors="ignore")
+            starts = [b.start() for b in _POC_BOUNDARY.finditer(text)] + [len(text)]
+            for start, end in zip(starts, starts[1:]):
+                m = _POC_HEAD.match(text, start)
+                if not m:
+                    continue
+                urls = _POC_LINK.findall(text, m.end(), end)
                 if urls:
-                    _poc_index[parts[i].upper()] = urls[:3]
+                    cve_id = m.group(1).upper()
+                    _poc_index[cve_id] = urls[:3]
+                    if m.group(2):
+                        _poc_dates[cve_id] = m.group(2)
+                    repos = _POC_REPO.findall(text, m.end(), end)
+                    if repos:
+                        _poc_counts[cve_id] = len({(o.lower(), r.lower()) for o, r in repos})
+                        nicks = _nicknames_of(repos)
+                        if nicks:
+                            _poc_nicks[cve_id] = nicks
             _poc_ok = bool(_poc_index)
             logger.info(f"  ✅ PoC 인덱스 로드 완료 ({len(_poc_index)}개 CVE 매핑)")
         except Exception as e:
             logger.warning(f"  ⚠️ PoC-in-GitHub 파싱 실패: {e}")
+        if not _poc_ok:
+            cache_drop("poc-in-github.md")
 
     return _poc_index
 
@@ -324,6 +422,42 @@ def poc_ok() -> bool:
 def poc_urls(cve_id: str) -> List[str]:
     load_poc_index()
     return _poc_index.get(cve_id.upper(), [])
+
+
+def poc_dates() -> Dict[str, str]:
+    """PoC 색인에 있는 CVE 의 공개일(README 표기) — 날짜가 없는 CVE 는 빠져 있다."""
+    load_poc_index()
+    return _poc_dates
+
+
+def poc_count(cve_id: str) -> int:
+    """PoC 색인에 올라온 이 CVE 의 저장소 수 — 화제 정도를 보여 주는 값이다. 판정에는 쓰지 않는다."""
+    load_poc_index()
+    return _poc_counts.get(str(cve_id).upper(), 0)
+
+
+def poc_nicknames(cve_id: str) -> List[Tuple[str, int]]:
+    """PoC 저장소 이름에서 모은 별칭 — (표기, 그 이름을 쓴 서로 다른 주인 수), 많이 쓴 순."""
+    load_poc_index()
+    return [(_nick_display(_nick_spell[key]), n) for key, n in _poc_nicks.get(str(cve_id).upper(), [])]
+
+
+def tool_nicknames(cve_id: str, nuclei: bool = True, msf: bool = True) -> List[Tuple[str, str]]:
+    """nuclei 템플릿 이름 · Metasploit 모듈 경로에 적힌 별칭 — (표기, 출처). 사람이 붙인 이름이라 한 곳이면 인정한다.
+
+    nuclei 는 'WordPress Core < 7.0.3 - Preauth Reflected XSS (XSS2Shell)' 처럼 표기를 그대로 쓴다.
+    Metasploit 경로는 소문자라('…/react2shell_rce') 첫 글자만 대문자로 적는다.
+    """
+    out: List[Tuple[str, str]] = []
+    if nuclei:
+        tpl = nuclei_template(cve_id)
+        for _key, shown in nickname_parts((tpl or {}).get("name", "")):
+            out.append((f"{shown}Shell", "nuclei"))
+    if msf:
+        for mod in metasploit_modules(cve_id):
+            for _key, shown in nickname_parts(str(mod.get("fullname") or "").replace("/", " ")):
+                out.append((f"{shown[:1].upper()}{shown[1:]}Shell", "metasploit"))
+    return out
 
 
 @memo_ok
@@ -345,6 +479,7 @@ def load_cisa_kev(ttl_hours: int = 1) -> Optional[Dict[str, Dict]]:
         data = json.loads(raw.decode("utf-8", errors="ignore"))
     except ValueError as e:
         logger.error(f"CISA KEV 파싱 실패: {e}")
+        cache_drop("cisa-kev.json")
         return None
     out = {}
     for item in data.get("vulnerabilities", []) or []:
@@ -449,6 +584,7 @@ def load_vulncheck_kev(ttl_hours: int = 6) -> Optional[Dict[str, Dict]]:
             out[str(cve_id).upper()] = item
     if not out:
         logger.warning("VulnCheck KEV: 레코드를 하나도 읽지 못함 → 이번 회차 생략")
+        cache_drop("vulncheck-kev.bin")
         return None
     logger.info(f"📥 VulnCheck KEV {len(out)}건 (This product uses VulnCheck KEV)")
     return out
@@ -482,6 +618,7 @@ def load_epss_full(ttl_hours: int = 6) -> Optional[Dict[str, Tuple[float, float]
         text = gzip.decompress(raw).decode("utf-8", errors="replace")
     except Exception as e:
         logger.warning(f"EPSS 덤프 압축 해제 실패: {e}")
+        cache_drop("epss-full.csv.gz")
         return None
 
     out: Dict[str, Tuple[float, float]] = {}

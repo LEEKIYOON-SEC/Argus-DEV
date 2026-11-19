@@ -45,8 +45,15 @@ class FakeDB:
     def live_ids(self, days=90):
         return {r["id"] for r in self.rows}
 
-    def take_full_export_flag(self):
-        return False
+    full_flag = False
+    cleared = 0
+
+    def has_full_export_flag(self):
+        return self.full_flag
+
+    def clear_full_export_flag(self):
+        self.full_flag = False
+        self.cleared += 1
 
 
 class FactsOfTests(unittest.TestCase):
@@ -137,17 +144,20 @@ class MainTests(unittest.TestCase):
                           row("CVE-2026-0102", state(title="Old one", title_ko="예전 것"), updated=old)])
         self.previous = [ex.export_cves(self.db)[1]]
 
-    def _main(self, facts_result, previous=True, epss=None):
+    def _main(self, facts_result, previous=True, epss=None, crash=None):
         prev = (self.previous, (NOW - dt.timedelta(hours=1)).isoformat()) if previous else (None, None)
         patches = [
             mock.patch.object(ex.enrichment_sources, "load_epss_full", return_value=epss),
             mock.patch.object(ex, "_get_db", return_value=self.db),
             mock.patch.object(ex, "load_previous_export", return_value=prev),
             mock.patch.object(ex, "fetch_live_facts", return_value=facts_result),
-            mock.patch.object(ex, "fetch_live_products", return_value={}),
+            mock.patch.object(ex, "fetch_live_products", return_value=getattr(self, "live_products", {})),
             mock.patch.object(ex, "publish_weekly_report"),
             mock.patch.object(ex, "apply_retention_policy", return_value=0),
+            mock.patch.object(ex, "refresh_attention", return_value=(0, 0)),  # PoC 색인을 받지 않는다
         ]
+        if crash:
+            patches.append(mock.patch.object(ex, crash, side_effect=RuntimeError("도중 실패")))
         for p in patches:
             p.start()
         try:
@@ -176,6 +186,28 @@ class MainTests(unittest.TestCase):
         self.assertIsNone(self._main((None, "error")),
                           "일부 행만 담긴 파일로 덮어쓰지 않는다 — 배포 단계가 배포본을 이월한다")
 
+    def test_unreadable_product_index_falls_back_to_full_export(self):
+        self.live_products = None
+        out = self._main(({"CVE-2026-0102": {"o": ["ai", "ai"], "t": "Old one (carried)"}}, "ok"))
+        self.assertEqual(out["facts"]["CVE-2026-0102"]["t"], "Old one",
+                         "직전 제품 인덱스 없이 병합하지 않는다 — 전량 export 로 다시 만든다")
+
+    def test_full_export_request_is_cleared_only_after_the_files_are_written(self):
+        self.db.full_flag = True
+        with self.assertRaises(RuntimeError):
+            self._main(({}, "ok"), crash="export_stats")
+        self.assertTrue(self.db.full_flag, "도중에 죽으면 요청이 남아 다음 회차가 전량 export 한다")
+        self._main(({}, "ok"))
+        self.assertFalse(self.db.full_flag)
+        self.assertEqual(self.db.cleared, 1)
+
+    def test_no_store_writes_nothing_and_fails(self):
+        with mock.patch.object(ex, "_get_db", return_value=None):
+            with self.assertRaises(SystemExit) as stop:
+                ex.main(self.tmp)
+        self.assertEqual(stop.exception.code, 1)
+        self.assertEqual(os.listdir(self.tmp), [], "빈 cves.json 을 쓰면 배포 단계가 대시보드를 비운다")
+
     def test_full_export_writes_all(self):
         out = self._main(({}, "ok"), previous=False)
         self.assertEqual(set(out["facts"]), {"CVE-2026-0101", "CVE-2026-0102"})
@@ -196,6 +228,89 @@ class MainTests(unittest.TestCase):
     def test_epss_keeps_db_values_without_the_file(self):
         self._main(({}, "ok"), epss=None)
         self.assertEqual({r["epss"] for r in self._cves().values()}, {0.2}, "파일을 못 받으면 DB 값 그대로")
+
+
+class RetentionPagingTests(unittest.TestCase):
+    """남기는 행(악용 중)이 첫 쪽을 채워도 그 뒤의 행까지 본다"""
+
+    class DB:
+        def __init__(self, rows):
+            self.rows = rows
+            self.calls = []
+
+        def retention_rows(self, before, limit, offset=0, **filters):
+            self.calls.append(offset)
+            return self.rows[offset:offset + limit]
+
+        def delete_rows(self, ids):
+            gone = set(ids)
+            self.rows = [r for r in self.rows if r["id"] not in gone]
+            return len(gone)
+
+    def test_kept_rows_are_skipped_on_the_next_page(self):
+        keep = [{"id": f"CVE-2020-{n:05d}", "is_kev": True, "last_alert_state": {"tier": "T0", "is_kev": True}}
+                for n in range(5)]
+        drop = [{"id": f"CVE-2021-{n:05d}", "is_kev": False, "cvss_score": 5.0,
+                 "last_alert_state": {"tier": "T2"}} for n in range(4)]
+        db = self.DB(keep + drop)
+        with mock.patch.object(ex, "RETENTION_BATCH", 3):
+            done, kept = ex._retire(db, "2026-01-01", db.delete_rows)
+        self.assertEqual((done, kept), (4, 5))
+        self.assertEqual([r["id"] for r in db.rows], [r["id"] for r in keep])
+        self.assertEqual(db.calls[:3], [0, 3, 5])
+
+    def test_stops_after_the_page_limit(self):
+        keep = [{"id": f"CVE-2020-{n:05d}", "is_kev": True, "last_alert_state": {"tier": "T0", "is_kev": True}}
+                for n in range(50)]
+        db = self.DB(keep)
+        with mock.patch.object(ex, "RETENTION_BATCH", 2), mock.patch.object(ex, "RETENTION_PAGES", 4):
+            self.assertEqual(ex._retire(db, "2026-01-01", db.delete_rows), (0, 8))
+        self.assertEqual(len(db.calls), 4)
+
+
+class AttentionRefreshTests(unittest.TestCase):
+    """별칭 · PoC 저장소 수 — export 때마다 모든 행을 지금 PoC 색인으로 다시 채운다(등급은 그대로)"""
+
+    def run_refresh(self, entries, ok=True):
+        counts = {"CVE-2026-114938": 55, "CVE-2026-63030": 75}
+        nicks = {"CVE-2026-114938": [("Java4Shell", 35)], "CVE-2026-63030": [("WP2Shell", 39)]}
+        tools = {"CVE-2026-63030": [("Wp2Shell", "metasploit")], "CVE-2026-93485": [("Comment2Shell", "nuclei")]}
+        def tool(cve_id, nuclei=True, msf=True):
+            return [(n, s) for n, s in tools.get(cve_id, []) if (s == "nuclei" and nuclei) or (s == "metasploit" and msf)]
+        es = ex.enrichment_sources
+        with mock.patch.object(es, "poc_ok", return_value=ok), \
+                mock.patch.object(es, "poc_count", side_effect=lambda c: counts.get(c, 0)), \
+                mock.patch.object(es, "poc_nicknames", side_effect=lambda c: nicks.get(c, [])), \
+                mock.patch.object(es, "tool_nicknames", side_effect=tool), \
+                mock.patch.object(es, "nickname_display", side_effect=lambda k: {"wp2shell": "WP2Shell"}.get(k, "")):
+            return ex.refresh_attention(entries)
+
+    def test_rows_get_current_names_and_counts(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": True, "tier": "T0"},
+                {"id": "CVE-2026-63030", "has_poc": True, "has_metasploit_module": True, "poc_count": 3},
+                {"id": "CVE-2026-93485", "has_poc": False, "has_nuclei_template": True},
+                {"id": "CVE-2026-0001", "has_poc": True}]
+        self.assertEqual(self.run_refresh(rows), (3, 2))
+        self.assertEqual(rows[0]["nicknames"], ["Java4Shell"])
+        self.assertEqual(rows[0]["poc_count"], 55)
+        self.assertEqual(rows[0]["tier"], "T0", "등급은 바꾸지 않는다")
+        self.assertEqual(rows[1]["nicknames"], ["WP2Shell"], "Metasploit 의 같은 이름은 한 번만, PoC 표기로")
+        self.assertEqual(rows[1]["poc_count"], 75, "이어받은 행의 옛 값도 지금 색인으로 바뀐다")
+        self.assertEqual(rows[2]["nicknames"], ["Comment2Shell"], "nuclei 템플릿 이름은 PoC 가 없어도 싣는다")
+        self.assertNotIn("poc_count", rows[2])
+        self.assertNotIn("nicknames", rows[3])
+        self.assertNotIn("poc_count", rows[3], "색인에 없으면 싣지 않는다")
+
+    def test_rows_without_poc_judgement_drop_poc_values(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": False, "poc_count": 9, "nicknames": ["Java4Shell"]}]
+        self.run_refresh(rows)
+        self.assertNotIn("poc_count", rows[0], "상세의 'PoC 없음'과 어긋나지 않게")
+        self.assertNotIn("nicknames", rows[0])
+
+    def test_unreadable_index_changes_nothing(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": True, "poc_count": 9, "nicknames": ["Java4Shell"]}]
+        self.assertIsNone(self.run_refresh(rows, ok=False))
+        self.assertEqual(rows[0], {"id": "CVE-2026-114938", "has_poc": True, "poc_count": 9, "nicknames": ["Java4Shell"]})
 
 
 class EpssRefreshTests(unittest.TestCase):

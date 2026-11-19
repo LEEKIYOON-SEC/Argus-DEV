@@ -40,6 +40,17 @@ def _year(cve_id: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def snapshots_to_seed(db):
+    """스냅샷이 없는 소스 — (재시드가 지금 전량을 기록할 것, bulk-lane 첫 회차에 맡길 것).
+
+    catch_up 이 있는 소스(PoC-in-GitHub)는 첫 기록 때 최근 · 추적 안 된 CVE 를 판정해야 한다.
+    재시드가 전량을 먼저 기록하면 그 예외가 건너뛰어진다(INVARIANTS §3).
+    """
+    unrecorded = [(k, s) for k, s in signal_snapshot.SOURCES.items() if db.get_snapshot_digest(k) is None]
+    return ([(k, s) for k, s in unrecorded if s.catch_up is None],
+            [(k, s) for k, s in unrecorded if s.catch_up is not None])
+
+
 def _candidates(collector: Collector):
     t0 = set(collector.kev_set) | set(collector.vulncheck_kev_set)
     t0 |= set(enrichment_sources.load_metasploit_index() or {})
@@ -123,14 +134,13 @@ def _fill_nvd(db, deadline: float, api_key: str):
         if not any(meaningful(a.get("vendor")) for a in affected):
             fresh_misses.add(cve_id)
             continue
-        state["affected"] = affected
-        pending.append({"id": cve_id, "last_alert_state": state})
+        pending.append({"id": cve_id, "patch": {"affected": affected}})
         done += 1
         if len(pending) >= 200:
-            db.bulk_save_states(pending, "벤더")
+            db.patch_states(pending, "벤더")
             pending = []
     if pending:
-        db.bulk_save_states(pending, "벤더")
+        db.patch_states(pending, "벤더")
     if fresh_misses:
         db.set_pipeline_state(
             {_VENDOR_MISS_KEY: sorted(known_misses | fresh_misses)})
@@ -229,11 +239,12 @@ def run(dry_run: bool = False) -> int:
                 f"({' · '.join(f'{t} {n:,}' for t, n in sorted(by_tier.items())) or '-'}) · "
                 f"대상 아님 {skipped:,} · 실패 {failed:,}")
 
-    pending_sources = [(k, s) for k, s in signal_snapshot.SOURCES.items()
-                       if db.get_snapshot_digest(k) is None]
-    logger.info(f"소스 스냅샷: {len(signal_snapshot.SOURCES) - len(pending_sources)}"
+    pending_sources, left_to_sweep = snapshots_to_seed(db)
+    logger.info(f"소스 스냅샷: {len(signal_snapshot.SOURCES) - len(pending_sources) - len(left_to_sweep)}"
                 f"/{len(signal_snapshot.SOURCES)}종은 이미 기록돼 있어 손대지 않는다 "
                 f"(덮으면 그 사이 올라온 신규가 조용히 삼켜진다)")
+    for key, source in left_to_sweep:
+        logger.info(f"  [{source.label}] 여기서 기록하지 않는다 — bulk-lane 첫 회차가 최근 것을 판정하며 기록한다")
     for key, source in pending_sources:
         upstream = source.load()
         if upstream is None:

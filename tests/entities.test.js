@@ -173,12 +173,12 @@ test('뷰 모델 — 출처 표는 외부 출처만 묶음별로 한 번씩, 주
                            ['osv', 'GitHub Advisory Database CC-BY 4.0 · Ubuntu CC-BY-SA 4.0 등'],
                            ['vulncheck-kev', '출처 표기 필수'], ['first-epss', '출처 표기 요청']]);
   assert.equal(rowOf('vulncheck-kev').terms[0].label, 'VulnCheck 이용 조건');
-  // 예약 주기 = yml 예약 · 캐시 수명 (argus-fast */5 · KEV 캐시 1시간 · 6시간 · 24시간 · 주간 정비 · 매일 수명주기)
+  // 예약 주기 = yml 예약 · 캐시 수명 (argus-fast */5 · KEV 캐시 1시간 · PoC 색인 매시 · 6시간 · 24시간 · 주간 정비 · 매일 수명주기)
   const cadence = Object.fromEntries(VM.sources(EN, null, {}).flatMap(g => g.rows).map(r => [r.id, r.cadence]));
   assert.deepEqual(cadence, {
     'cve-record': '5분마다 (변경분)', cwe: '수동 (새 판이 나올 때)', osv: '매주', 'ai-discovery': '6시간마다',
     'cisa-kev': '매시', 'vulncheck-kev': '6시간마다', 'cisa-adp': '5분마다 (CVE 레코드와 함께)', 'first-epss': '6시간마다',
-    'exploit-db': '매일', metasploit: '매일', 'poc-in-github': '매일',
+    'exploit-db': '매일', metasploit: '매일', 'poc-in-github': '매시',
     sigma: '매주', 'et-open': '매주', 'snort-community': '매주', splunk: '매주', yara: '매주', nuclei: '매일',
     endoflife: '매일',
   });

@@ -159,6 +159,8 @@
     return {
       id: cve.id, severity: cve.severity || 'None', tier: cve.tier || '', title: cve.title || 'N/A',
       ai: cve.ai_discovered ? { program: cve.ai_program || '' } : null,
+      // 별칭(PHP2Shell 등) · 공개 PoC 저장소 수 — export 가 그때의 PoC 색인으로 채운다. 화제 정도이며 악용 근거가 아니다.
+      nicknames: (cve.nicknames || []).filter(Boolean).slice(0, 3), poc: Number(cve.poc_count) || 0,
       cvss: sc.cvss, epss: sc.epss, threat,
       // 취약점 유형 — CWE 가 여러 개면 더 구체적인 것 하나(cwe.js). 없거나 모듈이 없으면 null.
       type: CWE ? CWE.typeOf(cve.cwe) : null,

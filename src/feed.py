@@ -216,6 +216,9 @@ def changes_since(since: Optional[datetime.datetime],
         logger.error("⛔ deltaLog 전량으로도 구간을 못 덮음 — 그 앞 구간은 유실 가능")
 
     changes, horizon = _collect(batches, since, until)
+    if covered and until < now and horizon < until:
+        # 따라잡기 구간(24h)을 다 봤는데 그 끝까지 배치가 없었다 — 구간 끝으로 옮기지 않으면 같은 구간만 되풀이한다.
+        horizon = until
     logger.info(f"변경 CVE {len(changes)}건 ({since:%m-%d %H:%M} → {horizon:%m-%d %H:%M} UTC)")
     if cap is not None:
         changes, horizon = cap_by_batch(changes, cap, horizon)
