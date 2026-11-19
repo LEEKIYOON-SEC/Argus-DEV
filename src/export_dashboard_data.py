@@ -125,6 +125,46 @@ def refresh_epss(entries: list, epss) -> int:
     return changed
 
 
+def refresh_attention(entries: list) -> Optional[tuple]:
+    """별칭(PHP2Shell 등) · 공개 PoC 저장소 수를 지금 PoC 색인으로 모든 행에 다시 채운다 — 이어받은 행까지(EPSS 와 같다).
+
+    둘 다 화제 정도를 보여 주는 값이라 등급(tier)은 바꾸지 않는다.
+    판정 때 PoC 가 없던 행(has_poc 거짓)에는 PoC 수와 PoC 저장소 이름에서 온 별칭을 싣지 않는다 — 상세의
+    'PoC 없음'과 어긋나지 않게(실측 2026-11-19: 197행이 판정 뒤에 PoC 가 생겼다). nuclei · Metasploit 이름에서 온
+    별칭은 그 행에 템플릿 · 모듈이 있을 때만 싣는다. 표기는 PoC 저장소 이름에서 가장 많이 쓴 것을 먼저 쓴다.
+    PoC 색인을 읽지 못하면 아무것도 바꾸지 않는다(직전 값 유지). (별칭을 실은 행 수, PoC 수를 실은 행 수)를 돌려준다.
+    """
+    if not enrichment_sources.poc_ok():
+        return None
+    named = counted = 0
+    for e in entries:
+        cve_id = str(e.get("id") or "").upper()
+        names: dict = {}
+        if e.get("has_poc"):
+            n = enrichment_sources.poc_count(cve_id)
+            if n:
+                e["poc_count"] = n
+                counted += 1
+            else:
+                e.pop("poc_count", None)
+            for shown, _owners in enrichment_sources.poc_nicknames(cve_id):
+                names.setdefault(shown.lower(), shown)
+        else:
+            e.pop("poc_count", None)
+        for shown, _source in enrichment_sources.tool_nicknames(
+                cve_id, nuclei=bool(e.get("has_nuclei_template")), msf=bool(e.get("has_metasploit_module"))):
+            key = shown.lower()
+            if key not in names:
+                names[key] = enrichment_sources.nickname_display(key) or shown
+        shown_names = list(names.values())[:enrichment_sources.NICKNAME_MAX]
+        if shown_names:
+            e["nicknames"] = shown_names
+            named += 1
+        else:
+            e.pop("nicknames", None)
+    return named, counted
+
+
 def normalize_rules(entries: list) -> int:
     """이월된 행까지 모든 행의 룰 표기를 맞춘다 — 증분 export 는 바뀐 행만 DB 에서 다시 읽기 때문이다.
     여러 번 적용해도 결과가 같다. 바뀐 행 수를 돌려준다."""
@@ -783,6 +823,11 @@ def main(data_dir: str = None):
         print(f"  EPSS 전량 파일을 쓰지 못함({len(epss or {}):,}행) → 점수는 DB 값 그대로", flush=True)
     else:
         print(f"  EPSS 점수를 전량 파일({len(epss):,}행)로 맞춤: {refresh_epss(cve_data, epss):,}건 바뀜", flush=True)
+    attention = refresh_attention(cve_data)
+    if attention is None:
+        print("  PoC 색인을 읽지 못함 → 별칭 · PoC 저장소 수는 직전 값 그대로", flush=True)
+    else:
+        print(f"  별칭 {attention[0]:,}건 · PoC 저장소 수 {attention[1]:,}건 (지금 PoC 색인 기준)", flush=True)
 
     cve_path = os.path.join(data_dir, "cves.json")
     pages.write_json(cve_path, cve_data)

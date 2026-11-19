@@ -1148,3 +1148,46 @@ test('CSV — 수식으로 읽힐 칸은 앞에 작은따옴표를 붙인다', (
   assert.match(csv[3], /,'@SUM\(A1\),/);
   assert.doesNotMatch(csv[4], /,'/, '보통 글은 그대로');
 });
+
+test('별칭 · 화제도 — 목록 배지 · 별칭 검색 · poc: 검색어 · 상세 · 화제 CVE 칸 (export 가 채운 값)', () => {
+  const d = dashboard();
+  d.run(`(() => {
+    const by = id => allCves.find(c => c.id === id);
+    Object.assign(by('CVE-2026-0002'), { has_poc: true, poc_urls: ['https://github.com/a/x'], poc_count: 55, nicknames: ['Java4Shell'] });
+    Object.assign(by('CVE-2026-0003'), { has_poc: true, poc_urls: ['https://github.com/b/y'], poc_count: 784,
+                                          nicknames: ['PHP2Shell', 'HTTP2Shell'], published: '2026-03-01' });
+    Object.assign(by('CVE-2026-0005'), { has_poc: true, poc_urls: ['https://github.com/c/z'], poc_count: 7 });
+    _haystack.clear();
+  })()`);
+  // 검색 — 별칭은 CVE 레코드에 없는 이름이라 검색 문구에 따로 넣는다
+  assert.deepEqual(search(d, 'java4shell'), [cve(2)]);
+  assert.deepEqual(search(d, 'http2shell'), [cve(3)], '다른 이름으로도 찾는다');
+  assert.deepEqual(search(d, 'poc:>=50'), [cve(2), cve(3)]);
+  assert.deepEqual(search(d, 'poc:>=100'), [cve(3)]);
+  // 목록 — 알림 시각 옆 배지, 마우스를 올리면 출처 · 다른 이름 · 저장소 수
+  filterIds(d, '');
+  const html = d.el('cve-table-body').innerHTML;
+  const row = id => html.split('<tr ').find(r => r.includes(`data-id="${id}"`));
+  assert.match(row(cve(2)), /<span class="tag-name" title="별칭: [^"]*공개 PoC 저장소 55개[^"]*악용 근거는 아닙니다">Java4Shell<\/span>/);
+  assert.match(row(cve(3)), /다른 이름 HTTP2Shell[^"]*">PHP2Shell</);
+  assert.doesNotMatch(row(cve(1)), /tag-name/, '별칭이 없으면 배지도 없다');
+  // 상세 — 머리글 배지, PoC 행은 저장소 수(링크는 판정 때 실은 앞 몇 개)
+  d.run("showDetail('CVE-2026-0002')");
+  assert.match(d.el('modal-sev-badge').innerHTML, /class="tag-name"[^>]*>Java4Shell</);
+  assert.match(d.el('modal-body').innerHTML, /공개 저장소 55개/);
+  assert.match(d.el('modal-body').innerHTML, /링크는 앞 1개만 싣습니다/);
+  // 대시보드 — 공개 90일 이내만, 저장소가 많은 순. CVE-2026-0003 은 공개 3월이라 빠진다
+  d.run('renderDashboard();');
+  const hot = [...d.el('dash-hot').innerHTML.matchAll(/data-cve="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(hot, [cve(2), cve(5)]);
+  assert.match(d.el('dash-hot').innerHTML, /PoC 저장소 55개/);
+  assert.equal(d.el('fold-hot-sum').textContent, 'Java4Shell 55 …');
+});
+
+test('별칭 — 뷰 모델 스크립트가 없어도 목록 배지 · 검색이 동작한다', () => {
+  const d = withFixture(loadDashboard([{ file: 'docs/js/cve-dashboard.js' }, { file: 'docs/js/cve-detail.js' }, { file: 'docs/js/dashboard-view.js' }]));
+  d.run('dataReady = true;');
+  d.run("Object.assign(allCves.find(c => c.id === 'CVE-2026-0002'), { has_poc: true, poc_count: 5, nicknames: ['Java4Shell'] }); _haystack.clear();");
+  assert.deepEqual([...filterIds(d, "activeFilters.search = 'java4shell';")], [cve(2)]);
+  assert.match(d.el('cve-table-body').innerHTML, />Java4Shell<\/span>/);
+});

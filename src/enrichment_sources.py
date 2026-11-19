@@ -1,3 +1,4 @@
+import collections
 import csv
 import functools
 import io
@@ -304,6 +305,56 @@ _poc_ok = False
 _POC_BOUNDARY = re.compile(r"^### ", re.M)
 _POC_HEAD = re.compile(rf"### ({CVE_RE.pattern})(?: \((\d{{4}}-\d{{2}}-\d{{2}})\))?")
 _POC_LINK = re.compile(r"https://github\.com/[^\s\)\]]+")
+# 저장소 줄 '- [owner/repo](https://github.com/owner/repo)' — 저장소 수와 별칭은 이 줄만 센다(설명 속 링크는 빼고).
+_POC_REPO = re.compile(r"^- \[[^\]]*\]\(https://github\.com/([^/\s\)]+)/([^/\s\)]+)\)", re.M)
+_poc_counts: Dict[str, int] = {}
+_poc_nicks: Dict[str, List[Tuple[str, int]]] = {}     # CVE → [(key, 그 이름을 쓴 서로 다른 주인 수)]
+# 별칭 표기는 CVE 마다 고르지 않고 색인 전체에서 고른다 — 같은 이름이 CVE 마다 WP2Shell · Wp2Shell 로 갈리지 않게.
+_nick_spell: Dict[str, "collections.Counter"] = collections.defaultdict(collections.Counter)
+
+# 별칭 — 'PHP2Shell · Java4Shell' 꼴(화제가 된 취약점에 붙는 이름). CVE 레코드에는 이런 이름이 없고 PoC 저장소 ·
+# 탐지 템플릿 이름에만 나온다(실측 2026-11-19). 앞부분은 글자로 시작하고 글자로 끝나야 한다 — Metasploit 페이로드
+# 이름(aarch64shell · x64shell)이 4shell 로 읽히지 않게. 'Log4ShellScanner' 처럼 대문자로 이어 붙인 이름은 잡고,
+# 'log4shells' 처럼 소문자가 이어지면 다른 낱말로 본다.
+_NICK = re.compile(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,18}[A-Za-z])[-_ ]?([24])[-_ ]?shell(?!(?-i:[a-z0-9]))", re.I)
+# 서로 다른 저장소 주인이 이만큼 같은 이름을 써야 별칭으로 본다 — 한두 명이 엉뚱한 CVE 에 붙인 이름을 거른다
+# (예: php2shell 이 CVE-2025-55182 · CVE-2024-4577 에 한 명씩). 실측에서 3명 이상은 13건이었고 철회 1건 말고 모두 T0/T1.
+NICKNAME_MIN_OWNERS = 3
+NICKNAME_MAX = 3
+
+
+def nickname_parts(text: str) -> List[Tuple[str, str]]:
+    """글에서 별칭 후보 — (key, 쓴 대로의 앞부분과 숫자). key 는 소문자('php2shell'), 둘째는 'PHP2' 처럼."""
+    return [(f"{m.group(1).lower()}{m.group(2)}shell", f"{m.group(1)}{m.group(2)}") for m in _NICK.finditer(text or "")]
+
+
+def _nick_display(spellings: "collections.Counter") -> str:
+    """가장 많이 쓴 표기 — 대문자가 섞인 표기(PHP2 · Java4)를 먼저 고르고, 없으면 첫 글자만 대문자로."""
+    cased = [(n, s) for s, n in spellings.items() if any(ch.isupper() for ch in s)]
+    if cased:
+        return f"{max(cased)[1]}Shell"
+    best = max((n, s) for s, n in spellings.items())[1]
+    return f"{best[:1].upper()}{best[1:]}Shell"
+
+
+def _nicknames_of(repos: List[Tuple[str, str]]) -> List[Tuple[str, int]]:
+    """저장소(주인, 이름) 목록에서 별칭 — (key, 그 이름을 쓴 서로 다른 주인 수), 많이 쓴 순.
+    표기는 색인 전체에 모아(_nick_spell) nickname_display 가 고른다."""
+    owners: Dict[str, set] = collections.defaultdict(set)
+    for owner, repo in repos:
+        for key, shown in nickname_parts(repo):
+            owners[key].add(owner.lower())
+            _nick_spell[key][shown] += 1
+    found = sorted(((len(o), key) for key, o in owners.items() if len(o) >= NICKNAME_MIN_OWNERS),
+                   key=lambda x: (-x[0], x[1]))
+    return [(key, n) for n, key in found[:NICKNAME_MAX]]
+
+
+def nickname_display(key: str) -> str:
+    """별칭 key('wp2shell')의 표기 — PoC 저장소 이름에서 가장 많이 쓴 것. 색인에 없으면 빈 글."""
+    load_poc_index()
+    spellings = _nick_spell.get(key)
+    return _nick_display(spellings) if spellings else ""
 
 
 def load_poc_index() -> Dict[str, List[str]]:
@@ -347,6 +398,12 @@ def load_poc_index() -> Dict[str, List[str]]:
                     _poc_index[cve_id] = urls[:3]
                     if m.group(2):
                         _poc_dates[cve_id] = m.group(2)
+                    repos = _POC_REPO.findall(text, m.end(), end)
+                    if repos:
+                        _poc_counts[cve_id] = len({(o.lower(), r.lower()) for o, r in repos})
+                        nicks = _nicknames_of(repos)
+                        if nicks:
+                            _poc_nicks[cve_id] = nicks
             _poc_ok = bool(_poc_index)
             logger.info(f"  ✅ PoC 인덱스 로드 완료 ({len(_poc_index)}개 CVE 매핑)")
         except Exception as e:
@@ -371,6 +428,36 @@ def poc_dates() -> Dict[str, str]:
     """PoC 색인에 있는 CVE 의 공개일(README 표기) — 날짜가 없는 CVE 는 빠져 있다."""
     load_poc_index()
     return _poc_dates
+
+
+def poc_count(cve_id: str) -> int:
+    """PoC 색인에 올라온 이 CVE 의 저장소 수 — 화제 정도를 보여 주는 값이다. 판정에는 쓰지 않는다."""
+    load_poc_index()
+    return _poc_counts.get(str(cve_id).upper(), 0)
+
+
+def poc_nicknames(cve_id: str) -> List[Tuple[str, int]]:
+    """PoC 저장소 이름에서 모은 별칭 — (표기, 그 이름을 쓴 서로 다른 주인 수), 많이 쓴 순."""
+    load_poc_index()
+    return [(_nick_display(_nick_spell[key]), n) for key, n in _poc_nicks.get(str(cve_id).upper(), [])]
+
+
+def tool_nicknames(cve_id: str, nuclei: bool = True, msf: bool = True) -> List[Tuple[str, str]]:
+    """nuclei 템플릿 이름 · Metasploit 모듈 경로에 적힌 별칭 — (표기, 출처). 사람이 붙인 이름이라 한 곳이면 인정한다.
+
+    nuclei 는 'WordPress Core < 7.0.3 - Preauth Reflected XSS (XSS2Shell)' 처럼 표기를 그대로 쓴다.
+    Metasploit 경로는 소문자라('…/react2shell_rce') 첫 글자만 대문자로 적는다.
+    """
+    out: List[Tuple[str, str]] = []
+    if nuclei:
+        tpl = nuclei_template(cve_id)
+        for _key, shown in nickname_parts((tpl or {}).get("name", "")):
+            out.append((f"{shown}Shell", "nuclei"))
+    if msf:
+        for mod in metasploit_modules(cve_id):
+            for _key, shown in nickname_parts(str(mod.get("fullname") or "").replace("/", " ")):
+                out.append((f"{shown[:1].upper()}{shown[1:]}Shell", "metasploit"))
+    return out
 
 
 @memo_ok

@@ -50,8 +50,37 @@ README = """# PoC in GitHub
 def reset_poc():
     es._poc_index.clear()
     es._poc_dates.clear()
+    es._poc_counts.clear()
+    es._poc_nicks.clear()
+    es._nick_spell.clear()
     es._poc_loaded = False
     es._poc_ok = False
+
+
+# 별칭 — 서로 다른 주인 3명이 같은 이름(표기는 제각각), 한 주인이 두 번 쓴 이름, 페이로드 이름, 대문자로 이어 붙인 이름
+NAMED = """# PoC in GitHub
+
+## 2026
+### CVE-2026-109618 (2026-10-21)
+- [a/PHP2Shell](https://github.com/a/PHP2Shell)
+- [b/php2shell-detect](https://github.com/b/php2shell-detect)
+- [c/CVE-2026-109618-PHP2Shell-Scanner](https://github.com/c/CVE-2026-109618-PHP2Shell-Scanner)
+- [d/aarch64shell-payload](https://github.com/d/aarch64shell-payload)
+- [e/Foo2Shell](https://github.com/e/Foo2Shell)
+- [e/foo2shell-v2](https://github.com/e/foo2shell-v2)
+- [B/PHP2Shell-copy](https://github.com/B/PHP2Shell-copy)
+
+### CVE-2026-109619 (2026-10-21)
+- [x/php2shell](https://github.com/x/php2shell)
+- [y/php2shell-2](https://github.com/y/php2shell-2)
+- [z/php-2-shell](https://github.com/z/php-2-shell)
+
+### CVE-2021-44228 (2021-12-10)
+- [p/Log4ShellScanner](https://github.com/p/Log4ShellScanner)
+- [q/log4shell](https://github.com/q/log4shell)
+- [r/Log4Shell-poc](https://github.com/r/Log4Shell-poc)
+- [s/log4shells-notes](https://github.com/s/log4shells-notes)
+"""
 
 
 class PocIndexTests(unittest.TestCase):
@@ -81,6 +110,44 @@ class PocIndexTests(unittest.TestCase):
         self.assertEqual(get.call_args.args[0], "poc-in-github.md")
         self.assertEqual(get.call_args.kwargs.get("since"), es.this_hour_start(),
                          "24시간 수명이 아니라 이번 시(時)에 받은 것만 쓴다")
+
+
+class NicknameTests(unittest.TestCase):
+    """별칭 — 서로 다른 저장소 주인 3명 이상이 쓴 이름, 표기는 색인 전체에서 가장 많이 쓴 것"""
+
+    def setUp(self):
+        reset_poc()
+        self.addCleanup(reset_poc)
+        with mock.patch.object(es, "cache_get", return_value=NAMED.encode()):
+            es.load_poc_index()
+
+    def test_three_distinct_owners_make_a_nickname(self):
+        self.assertEqual(es.poc_nicknames("CVE-2026-109618"), [("PHP2Shell", 3)],
+                         "주인 a · b · c 세 명(대소문자만 다른 B 는 b 와 같은 주인) — Foo2Shell 은 한 주인이라 빠진다")
+        self.assertEqual(es.poc_count("CVE-2026-109618"), 7, "저장소는 이름과 상관없이 다 센다")
+
+    def test_spelling_is_shared_across_cves(self):
+        self.assertEqual(es.poc_nicknames("CVE-2026-109619"), [("PHP2Shell", 3)],
+                         "이 CVE 의 저장소는 모두 소문자지만 표기는 색인 전체에서 대문자가 섞인 'PHP2' 를 쓴다")
+        self.assertEqual(es.nickname_display("php2shell"), "PHP2Shell")
+        self.assertEqual(es.nickname_display("없는이름"), "")
+
+    def test_camel_case_joined_names_count_but_longer_words_do_not(self):
+        self.assertEqual(es.poc_nicknames("CVE-2021-44228"), [("Log4Shell", 3)],
+                         "Log4ShellScanner 는 잡고 log4shells-notes 는 다른 낱말로 본다")
+
+    def test_nickname_parts(self):
+        self.assertEqual(es.nickname_parts("BigFix-Java4Shell-CVE-2026-114938-Scanner"), [("java4shell", "Java4")])
+        self.assertEqual(es.nickname_parts("aarch64shell x64shell"), [], "페이로드 이름은 별칭이 아니다")
+        self.assertEqual(es.nickname_parts("WordPress Core - Preauth Reflected XSS (XSS2Shell)"), [("xss2shell", "XSS2")])
+        self.assertEqual(es.nickname_parts("log4shells"), [])
+
+    def test_tool_names(self):
+        with mock.patch.object(es, "nuclei_template", return_value={"name": "WordPress Core < 7.1.1 - Stored XSS (Comment2Shell)"}), \
+                mock.patch.object(es, "metasploit_modules", return_value=[{"fullname": "exploit/multi/http/react2shell_rce"}]):
+            self.assertEqual(es.tool_nicknames("CVE-2026-93485"),
+                             [("Comment2Shell", "nuclei"), ("React2Shell", "metasploit")])
+            self.assertEqual(es.tool_nicknames("CVE-2026-93485", nuclei=False, msf=False), [])
 
 
 class CacheSinceTests(unittest.TestCase):

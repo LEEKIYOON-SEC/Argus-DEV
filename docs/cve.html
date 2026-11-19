@@ -137,6 +137,7 @@
             <button type="button" class="fold-btn" aria-expanded="false" aria-controls="fold-sev"><span>심각도 분포</span><small id="fold-sev-sum"></small></button>
             <button type="button" class="fold-btn" aria-expanded="false" aria-controls="fold-products"><span>영향 제품 순위</span><small id="fold-products-sum"></small></button>
             <button type="button" class="fold-btn" aria-expanded="false" aria-controls="fold-recent"><span>최근 공개 CVE</span><small id="fold-recent-sum"></small></button>
+            <button type="button" class="fold-btn" aria-expanded="false" aria-controls="fold-hot"><span>화제 CVE (PoC 많은 순)</span><small id="fold-hot-sum"></small></button>
           </div>
         </div>
       </section>
@@ -161,6 +162,10 @@
         <div class="panel fold-body" id="fold-recent" hidden>
           <div class="panel-head"><h2>최근 공개 CVE</h2><span class="panel-note">CVE 공개일 순입니다.</span></div>
           <ol class="recent-list" id="dash-recent"></ol>
+        </div>
+        <div class="panel fold-body" id="fold-hot" hidden>
+          <div class="panel-head"><h2>화제 CVE</h2><span class="panel-note">공개 90일 이내 CVE를 공개 PoC 저장소(PoC-in-GitHub)가 많은 순으로 보여 줍니다. 화제 정도이며 악용 근거는 아닙니다. 별칭은 PoC 저장소 · 탐지 템플릿 이름에서 모았습니다.</span></div>
+          <ol class="recent-list" id="dash-hot"></ol>
         </div>
       </section>
      </div>

@@ -154,6 +154,7 @@ class MainTests(unittest.TestCase):
             mock.patch.object(ex, "fetch_live_products", return_value=getattr(self, "live_products", {})),
             mock.patch.object(ex, "publish_weekly_report"),
             mock.patch.object(ex, "apply_retention_policy", return_value=0),
+            mock.patch.object(ex, "refresh_attention", return_value=(0, 0)),  # PoC 색인을 받지 않는다
         ]
         if crash:
             patches.append(mock.patch.object(ex, crash, side_effect=RuntimeError("도중 실패")))
@@ -265,6 +266,51 @@ class RetentionPagingTests(unittest.TestCase):
         with mock.patch.object(ex, "RETENTION_BATCH", 2), mock.patch.object(ex, "RETENTION_PAGES", 4):
             self.assertEqual(ex._retire(db, "2026-01-01", db.delete_rows), (0, 8))
         self.assertEqual(len(db.calls), 4)
+
+
+class AttentionRefreshTests(unittest.TestCase):
+    """별칭 · PoC 저장소 수 — export 때마다 모든 행을 지금 PoC 색인으로 다시 채운다(등급은 그대로)"""
+
+    def run_refresh(self, entries, ok=True):
+        counts = {"CVE-2026-114938": 55, "CVE-2026-63030": 75}
+        nicks = {"CVE-2026-114938": [("Java4Shell", 35)], "CVE-2026-63030": [("WP2Shell", 39)]}
+        tools = {"CVE-2026-63030": [("Wp2Shell", "metasploit")], "CVE-2026-93485": [("Comment2Shell", "nuclei")]}
+        def tool(cve_id, nuclei=True, msf=True):
+            return [(n, s) for n, s in tools.get(cve_id, []) if (s == "nuclei" and nuclei) or (s == "metasploit" and msf)]
+        es = ex.enrichment_sources
+        with mock.patch.object(es, "poc_ok", return_value=ok), \
+                mock.patch.object(es, "poc_count", side_effect=lambda c: counts.get(c, 0)), \
+                mock.patch.object(es, "poc_nicknames", side_effect=lambda c: nicks.get(c, [])), \
+                mock.patch.object(es, "tool_nicknames", side_effect=tool), \
+                mock.patch.object(es, "nickname_display", side_effect=lambda k: {"wp2shell": "WP2Shell"}.get(k, "")):
+            return ex.refresh_attention(entries)
+
+    def test_rows_get_current_names_and_counts(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": True, "tier": "T0"},
+                {"id": "CVE-2026-63030", "has_poc": True, "has_metasploit_module": True, "poc_count": 3},
+                {"id": "CVE-2026-93485", "has_poc": False, "has_nuclei_template": True},
+                {"id": "CVE-2026-0001", "has_poc": True}]
+        self.assertEqual(self.run_refresh(rows), (3, 2))
+        self.assertEqual(rows[0]["nicknames"], ["Java4Shell"])
+        self.assertEqual(rows[0]["poc_count"], 55)
+        self.assertEqual(rows[0]["tier"], "T0", "등급은 바꾸지 않는다")
+        self.assertEqual(rows[1]["nicknames"], ["WP2Shell"], "Metasploit 의 같은 이름은 한 번만, PoC 표기로")
+        self.assertEqual(rows[1]["poc_count"], 75, "이어받은 행의 옛 값도 지금 색인으로 바뀐다")
+        self.assertEqual(rows[2]["nicknames"], ["Comment2Shell"], "nuclei 템플릿 이름은 PoC 가 없어도 싣는다")
+        self.assertNotIn("poc_count", rows[2])
+        self.assertNotIn("nicknames", rows[3])
+        self.assertNotIn("poc_count", rows[3], "색인에 없으면 싣지 않는다")
+
+    def test_rows_without_poc_judgement_drop_poc_values(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": False, "poc_count": 9, "nicknames": ["Java4Shell"]}]
+        self.run_refresh(rows)
+        self.assertNotIn("poc_count", rows[0], "상세의 'PoC 없음'과 어긋나지 않게")
+        self.assertNotIn("nicknames", rows[0])
+
+    def test_unreadable_index_changes_nothing(self):
+        rows = [{"id": "CVE-2026-114938", "has_poc": True, "poc_count": 9, "nicknames": ["Java4Shell"]}]
+        self.assertIsNone(self.run_refresh(rows, ok=False))
+        self.assertEqual(rows[0], {"id": "CVE-2026-114938", "has_poc": True, "poc_count": 9, "nicknames": ["Java4Shell"]})
 
 
 class EpssRefreshTests(unittest.TestCase):

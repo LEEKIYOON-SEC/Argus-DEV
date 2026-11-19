@@ -420,9 +420,12 @@
             { kind: 'artifact', url: URL.metasploit, basis: 'CVE ID', items: mods })
       : row('Metasploit', 'miss', '모듈 없음', { kind: 'artifact', basis: 'CVE ID' }));
     const pocs = [...new Set((cve.poc_urls || []).filter(Boolean))];
+    // 저장소 수는 export 때 PoC 색인에서 센 값(poc_count)이 있으면 그것 — 링크는 판정 때 실은 앞 3개뿐이다.
+    const pocTotal = Math.max(Number(cve.poc_count) || 0, pocs.length);
     rows.push(cve.has_poc
-      ? row('PoC-in-GitHub', 'hit', pocs.length ? `공개 저장소 ${pocs.length}개` : '공개 PoC 있음',
-            { kind: 'artifact', url: URL.poc, basis: 'CVE ID', links: pocs, detail: 'PoC가 공개됐다는 뜻이며 실제 공격이 있었다는 뜻은 아닙니다' })
+      ? row('PoC-in-GitHub', 'hit', pocTotal ? `공개 저장소 ${pocTotal}개` : '공개 PoC 있음',
+            { kind: 'artifact', url: URL.poc, basis: 'CVE ID', links: pocs,
+              detail: `${pocTotal > pocs.length ? `링크는 앞 ${pocs.length}개만 싣습니다. ` : ''}PoC가 공개됐다는 뜻이며 실제 공격이 있었다는 뜻은 아닙니다` })
       : row('PoC-in-GitHub', 'miss', '없음', { kind: 'artifact', basis: 'CVE ID' }));
     if (cve.ssvc_exploitation === 'poc') {
       rows.push(row('CISA SSVC', 'info', 'Exploitation: poc', { kind: 'assessment', url: URL.cveRecord(cve.id),

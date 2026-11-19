@@ -343,6 +343,8 @@ small { font-size: 12px; }
 .badge-tier.tier-T2 { background: color-mix(in srgb, var(--tier-t2) 18%, transparent); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tier-t2) 40%, transparent); }
 .badge-tier.tier-T3 { background: color-mix(in srgb, var(--tier-t3) 15%, transparent); color: var(--text-muted); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tier-t3) 35%, transparent); }
 .tag-ai { padding: 0 6px; border: 1px dashed var(--border-strong); border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: help; white-space: nowrap; }
+/* 별칭(PHP2Shell 등) — 화제 정도 표시. 위협 신호 칩과 헷갈리지 않게 색을 채우지 않는다 */
+.tag-name { padding: 0 6px; border: 1px solid var(--accent); border-radius: 4px; font-size: 12px; font-weight: 700; color: var(--accent); cursor: help; white-space: nowrap; }
 .origin-tag { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 0 6px; border: 1px dashed var(--border-strong); border-radius: 4px;
   font-size: 12px; font-weight: 600; line-height: 1.6; color: var(--text-muted); white-space: nowrap; vertical-align: 1px; }
 .origin-tag.is-source { border-style: solid; }
