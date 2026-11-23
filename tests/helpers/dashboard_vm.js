@@ -87,7 +87,6 @@ function loadDashboard(sources) {
 const RESET = `
   activeFilters = {
     severity: new Set(['Critical', 'High', 'Medium', 'Low', 'None']),
-    signals: new Set(),
     search: '', vendor: '', product: '', month: '', day: '',
     kernel: '', cvssMin: null, epssMin: null,
   };

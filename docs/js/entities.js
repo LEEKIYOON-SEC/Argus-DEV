@@ -126,7 +126,7 @@
     exploit: { label: '공개 익스플로잇', signal: 'PUBLIC_EXPLOIT', note: '공개 익스플로잇 · PoC. 실제 공격이 있었다는 뜻은 아닙니다' },
     automation: { label: '자동화', signal: 'AUTOMATABLE', note: 'CISA SSVC 자동화 판정. 악용이 확인됐다는 뜻은 아닙니다' },
     ransomware: { label: '랜섬웨어', signal: 'RANSOMWARE', note: 'CISA KEV의 랜섬웨어 캠페인 사용 표기' },
-    detection: { label: '탐지 룰', signal: 'PUBLIC_DETECTION', note: '공개된 탐지 룰 · 점검 템플릿' },
+    detection: { label: '탐지 룰', signal: 'PUBLIC_DETECTION', note: '공개된 탐지 룰. 같은 칸에 싣는 nuclei 점검 템플릿은 탐지 룰 근거로 세지 않습니다' },
     remediation: { label: '조치', signal: 'PATCH_AVAILABLE', note: '수정 버전 · 필요 조치' },
     lifecycle: { label: '수명주기', signal: 'EOL_AFFECTED', note: '영향 버전의 지원 상태. 심각도가 아닙니다' },
   };
@@ -336,7 +336,8 @@
       RANSOMWARE: present('ransomware'),
       EOL_AFFECTED: [...new Set(eolCycles)],
       PATCH_AVAILABLE: remediation.filter(r => r.kind === 'fixed_version').map(r => r.id),
-      PUBLIC_DETECTION: present('detection'),
+      // 점검 템플릿(nuclei)은 탐지 룰 칸에 함께 싣지만 탐지 룰의 근거는 아니다.
+      PUBLIC_DETECTION: evidence.filter(e => e.type === 'detection' && e.status === 'present' && e.kind !== 'check').map(e => e.id),
       HIGH_EPSS: ['score:epss'],
       CRITICAL_CVSS: [primary.id],
     };

@@ -37,6 +37,15 @@ const FIXED_BUGS = ['has:nuclei', 'has:edb', 'has:ransom', 'has:foo'];
 // 의도한 변경 — 대시보드 KPI 정의(INVARIANTS §6): CISA KEV 는 is_kev 만, 무기화 = Metasploit ∪ Exploit-DB(nuclei 제외),
 // 24시간 칸 설명은 '신규'가 아니라 '알림·갱신'. 새 값은 아래 'KPI' 테스트가 확인한다. 예전 묶음(KPI_TILES)은 그대로 비교한다.
 const CHANGED_KPI = ['stat-kev', 'stat-weapon', 'stat-24h-sub'];
+// 2026-11 필터 정리(INVARIANTS §6)에서 지운 것 — 예전 has: 값(msf · rules · patched)과 예전 KPI 신호 버튼(activeFilters.signals ·
+// KPI_TILES). 같은 뜻의 새 검색어가 있는 것은 아래 '필터 정리' 테스트가 변경 전 값과 대조한다. 조건 줄(ui.chips)은 신호 버튼 대신
+// 검색어 has:kev 로 걸어 칩 구성이 달라졌다 — 같은 테스트가 새 칩을 확인한다.
+const REMOVED = {
+  searches: ['has:msf', 'has:rules', 'has:patched', 'has:kev has:rules'],
+  filters: ['signalKev', 'signalWeaponPoc', 'signalRules', 'signalAuto', 'signalAi', 'signalPatched'],
+  ui: ['chips', 'filterCount', 'afterClearSignal'],
+  stats: ['kpi'],
+};
 // 영향 제품 순위의 툴팁 문구만 바꿨다(말투 정리). 칸 구성 · 숫자 · 누르면 거는 필터는 그대로 비교한다.
 // 제품 이름은 이제 onclick 코드가 아니라 data-product 에 싣는다(이름의 따옴표 · 역슬래시가 코드로 읽히지 않게). 걸리는 필터는 같다.
 const noTitles = html => String(html).replace(/ title="[^"]*"/g, '')
@@ -48,6 +57,7 @@ function semantic(out) {
   for (const k of Object.keys(o.detail)) o.detail[k] = { id: o.detail[k].id, title: o.detail[k].title };
   for (const q of FIXED_BUGS) delete o.searches[q];
   for (const k of CHANGED_KPI) delete o.stats[k];
+  for (const [section, keys] of Object.entries(REMOVED)) for (const k of keys) delete o[section][k];
   o.stats.products = noTitles(o.stats.products);
   return o;
 }
@@ -73,14 +83,16 @@ test('회귀: 수명주기·파생 모듈이 없어도 목록·검색·내보내
 test('기존 has:* 는 뜻 그대로, 전부 통과하던 has:nuclei · edb · ransom · 잘못된 값은 고쳤다', () => {
   const d = dashboard();
   assert.deepEqual(search(d, 'has:kev'), [cve(1), cve(4), cve(10)]);
-  assert.deepEqual(search(d, 'has:msf'), [cve(1), cve(2), cve(7), cve(11)], '기존 무기화 묶음(MSF · EDB · nuclei) 그대로');
   assert.deepEqual(search(d, 'has:poc'), [cve(3), cve(14)]);
-  assert.deepEqual(search(d, 'has:rules'), [cve(1), cve(9)]);
   assert.deepEqual(search(d, 'has:ai'), [cve(5)]);
   assert.deepEqual(search(d, 'has:auto'), [cve(6)]);
-  assert.deepEqual(search(d, 'has:patched'), [cve(8)]);
-  for (const q of ['has:kev', 'has:msf', 'has:poc', 'has:rules', 'has:ai', 'has:auto', 'has:patched']) {
+  for (const q of ['has:kev', 'has:poc', 'has:ai', 'has:auto']) {
     assert.deepEqual(search(d, q), ids(BASELINE.searches[q]), `${q} 는 변경 전과 같다`);
+  }
+  // 판단 모듈(context.js) 없이도 행 값만으로 — 예전 경로(cveHasSignal)를 지운 뒤에도 같다
+  const core = dashboard({ files: CORE, lifecycle: false });
+  for (const q of ['has:kev', 'has:poc', 'has:ai', 'has:auto']) {
+    assert.deepEqual(search(core, q), ids(BASELINE.searches[q]), `${q} (판단 모듈 없이)`);
   }
   assert.deepEqual(BASELINE.searches['has:nuclei'].length, ALL.length, '변경 전: 전부 통과(버그)');
   assert.deepEqual(search(d, 'has:nuclei'), [cve(2), cve(7)]);
@@ -96,8 +108,11 @@ test('새 검색어 — 출처별 · 파생 신호 · 없음(no:) · 모름(unkn
   assert.deepEqual(search(d, 'has:ssvc-active'), [cve(4)]);
   assert.deepEqual(search(d, 'has:exploit'), [cve(1), cve(2), cve(3), cve(11), cve(14)], 'EDB · MSF · PoC (nuclei 제외)');
   assert.deepEqual(search(d, 'has:metasploit'), [cve(1)]);
-  assert.deepEqual(search(d, 'has:detection'), [cve(1), cve(2), cve(7), cve(9)], '룰 + nuclei 점검 템플릿');
-  assert.deepEqual(search(d, 'has:patch'), search(d, 'has:patched'));
+  assert.deepEqual(search(d, 'has:detection'), [cve(1)], '탐지 룰(Sigma)만 — nuclei 점검 템플릿만 있는 CVE-2 · 7 은 넣지 않는다');
+  assert.deepEqual(search(d, 'unknown:detection'), [cve(9)], '룰이 있다고만 적히고 어떤 룰인지 없으면 미확인');
+  assert.deepEqual(search(d, 'no:detection'), ALL.filter(x => ![cve(1), cve(9)].includes(x)));
+  assert.deepEqual(search(d, 'has:nuclei no:detection'), [cve(2), cve(7)], 'nuclei 만 있고 탐지 룰은 없음');
+  assert.deepEqual(search(d, 'has:patch'), ids(BASELINE.searches['has:patched']), '예전 has:patched 와 같은 뜻');
   assert.deepEqual(search(d, 'no:patch'), [cve(3)], 'OSV 에 패키지는 있는데 수정 버전 기록이 없음');
   assert.deepEqual(search(d, 'unknown:patch'), ALL.filter(x => ![cve(3), cve(8)].includes(x)), 'OSV 기록 없음은 모름');
   assert.deepEqual(search(d, 'has:high-epss'), [cve(1), cve(2), cve(6), cve(10), cve(14)]);
@@ -114,6 +129,82 @@ test('새 검색어 — 출처별 · 파생 신호 · 없음(no:) · 모름(unkn
   assert.deepEqual(search(d, 'release:windows'), [], '제품/사이클 형식이 아니면 통과시키지 않는다');
   assert.deepEqual(search(d, 'no:bogus'), []);
   assert.deepEqual(search(d, 'corr:bogus'), []);
+});
+
+test('필터 정리 — 지운 예전 값은 안내하고, 같은 뜻의 새 검색어는 변경 전 결과와 같다', () => {
+  const d = dashboard();
+  // 예전 신호 버튼 → 같은 뜻의 검색어 (변경 전 기준 파일과 대조)
+  for (const [name, q] of [['signalKev', 'has:kev'], ['signalAuto', 'has:auto'], ['signalAi', 'has:ai'], ['signalPatched', 'has:patch']]) {
+    assert.deepEqual(filterIds(d, `activeFilters.search = ${JSON.stringify(q)};`), BASELINE.filters[name], `${name} = ${q}`);
+  }
+  assert.equal(d.run("'signals' in activeFilters"), false, '예전 신호 버튼 상태는 없다');
+  for (const gone of ['KPI_TILES', 'cveHasSignal', 'cveHasRules', 'HAS_LEGACY']) {
+    assert.equal(d.run(`typeof ${gone}`), 'undefined', `${gone} 는 지웠다`);
+  }
+  // 지운 예전 값 — 아무것도 고르지 않고, 조건 줄에 '지원하지 않는 조건'으로 알린다(조건 수에는 넣지 않는다)
+  for (const q of ['has:msf', 'has:rules', 'has:patched', 'no:rules', 'unknown:patched']) {
+    assert.deepEqual(search(d, q), [], `${q} 는 지웠다`);
+  }
+  filterIds(d, "activeFilters.search = 'cvss:>=7 HAS:MSF windows'; activeFilters.vendor = 'microsoft';");
+  const chips = d.el('active-chips').innerHTML;
+  assert.match(chips, /<button type="button" class="chip chip-warn" data-drop-term="HAS:MSF" title="없는 조건이라[^"]*">지원하지 않는 조건 HAS:MSF<span>×<\/span><\/button>/,
+               '입력한 그대로 보여 주고, 누르면 그 조각만 뺀다');
+  assert.equal(d.el('filter-count').textContent, '1', '안내 칩은 필터 숫자에 넣지 않는다 (벤더 하나)');
+  d.run("toggleQueryTerm('HAS:MSF')");
+  assert.equal(d.run('activeFilters.search'), 'cvss:>=7 windows');
+  assert.doesNotMatch(d.el('active-chips').innerHTML, /chip-warn/);
+  // 이름이 아닌 값 — 객체 속성 이름(constructor · __proto__)도 조건으로 읽지 않고, 멈추지 않는다
+  const unknown = (dash, q) => [...dash.run(`unknownTerms(${JSON.stringify(q)})`)];
+  for (const q of ['has:constructor', 'has:__proto__', 'has:tostring', 'no:poc', 'unknown:nuclei']) {
+    assert.deepEqual(search(d, q), [], q);
+    assert.deepEqual(unknown(d, q), [q], `${q} 는 지원하지 않는 조건`);
+  }
+  assert.deepEqual(unknown(d, 'has:snort no:detection unknown:eol has:kev cvss:>=9 windows'), [], '아는 조건은 안내하지 않는다');
+  // 조건 줄 — 예전 신호 버튼 대신 검색어로 건 상태
+  filterIds(d, "activeFilters.cvssMin = 7; activeFilters.search = 'windows has:kev'; activeFilters.vendor = 'microsoft';");
+  assert.match(d.el('active-chips').innerHTML, /검색 &quot;windows has:kev&quot;[\s\S]*CVSS ≥ 7[\s\S]*벤더 microsoft/);
+  assert.equal(d.el('filter-count').textContent, '1');
+  // 판단 모듈이 없으면 신호 키를 몰라 안내하지 않는다
+  const core = dashboard({ files: CORE, lifecycle: false });
+  assert.deepEqual(unknown(core, 'has:msf'), []);
+});
+
+test('엔진별 탐지 룰 — has:snort · suricata · sigma · yara · splunk, nuclei 는 점검 템플릿으로 따로', () => {
+  const d = dashboard();
+  d.run(`(() => {
+    const set = (n, o) => Object.assign(allCves.find(c => c.id === 'CVE-2026-' + String(n).padStart(4, '0')), o);
+    set(3, { rule_engines: ['snort2', 'suricata5', 'suricata7'] });
+    set(4, { rule_engines: ['snort3', 'nuclei'], has_official_rules: true });
+    set(6, { rule_engines: ['yara', 'splunk', 'sigma', 'snort2', 'suricata7'] });
+    set(10, { rule_engines: ['nuclei'], has_official_rules: true });
+    ctxCache.clear();
+  })()`);
+  assert.deepEqual(search(d, 'has:snort'), [cve(3), cve(4), cve(6)], 'Snort 2 · 3 을 하나로');
+  assert.deepEqual(search(d, 'has:suricata'), [cve(3), cve(6)], 'Suricata 5 · 7 을 하나로');
+  assert.deepEqual(search(d, 'has:sigma'), [cve(1), cve(6)]);
+  assert.deepEqual(search(d, 'has:yara'), [cve(6)]);
+  assert.deepEqual(search(d, 'has:splunk'), [cve(6)]);
+  assert.deepEqual(search(d, 'has:snort has:sigma'), [cve(6)], '여럿이면 모두 있는 것');
+  assert.deepEqual(search(d, 'has:detection'), [cve(1), cve(3), cve(4), cve(6)]);
+  assert.deepEqual(search(d, 'has:nuclei'), [cve(2), cve(4), cve(7), cve(10)], '룰 색인에만 있는 nuclei(CVE-4 · 10)도');
+  assert.deepEqual(search(d, 'has:nuclei no:detection'), [cve(2), cve(7), cve(10)]);
+  // 대시보드 출처 화면의 nuclei 건수 = has:nuclei
+  assert.equal(d.run('liveAggregate()').sources.nuclei, 4);
+  // 목록 칸 — 엔진 계열 이름(정한 순서), 넷 이상이면 셋 + '외 N', nuclei 는 따로
+  filterIds(d, '');
+  const html = d.el('cve-table-body').innerHTML;
+  const cell = id => (html.split('<tr ').find(r => r.includes(`data-id="${id}"`)).match(/<td class="c-def"[^>]*>([\s\S]*?)<\/td>/) || [])[1];
+  const tags = id => [...cell(id).matchAll(/class="df (df-\w+)"[^>]*>([^<]+)</g)].map(m => `${m[1]}:${m[2]}`);
+  assert.deepEqual(tags(cve(3)), ['df-det:Snort', 'df-det:Suricata']);
+  assert.match(cell(cve(3)), /title="공개 탐지 룰: Suricata 5 · Suricata 7\./, '판은 설명에');
+  assert.deepEqual(tags(cve(4)), ['df-det:Snort', 'df-chk:nuclei']);
+  assert.deepEqual(tags(cve(6)), ['df-det:Snort', 'df-det:Suricata', 'df-det:Sigma', 'df-more:외 2']);
+  assert.match(cell(cve(6)), /class="df df-more" title="다른 탐지 룰: YARA · Splunk">외 2</);
+  assert.deepEqual(tags(cve(10)), ['df-chk:nuclei'], 'nuclei 만 — 탐지 룰 태그 없이 점검 템플릿만');
+  // 조건 칩의 건수(설명)도 검색어와 같다
+  d.run('renderQuickChips()');
+  assert.match(d.el('engine-chips').innerHTML, /data-term="has:snort"[^>]*전체 3건\)/);
+  assert.match(d.el('source-chips').innerHTML, /data-term="has:nuclei"[^>]*전체 4건\)/);
 });
 
 test('상관 — corr:<코드> · 카드 검색어 · 집계 숫자가 모두 같다 (대시보드 숫자 = 누른 뒤 목록)', () => {
@@ -153,8 +244,10 @@ test('KPI — 6칸, 정의가 바뀐 칸(CISA KEV · 무기화 · 24시간)과 �
   // renderStats 가 쓰는 칸(예전 id)도 같은 값
   assert.deepEqual(['stat-total', 'stat-24h', 'stat-kev', 'stat-weapon', 'stat-poc', 'stat-ai'].map(id => d.el(id).textContent), ['16', '5', '2', '3', '2', '1']);
   assert.equal(d.el('stat-24h-sub').textContent, '새 공개와 상태 변경 포함');
-  // 예전 KPI 네 칸의 신호 묶음은 기존 검색어(has:kev · has:msf)의 뜻으로 남는다
-  assert.deepEqual(JSON.parse(JSON.stringify(d.run('KPI_TILES.map(sig => allCves.filter(c => cveHasSignal(c, sig)).length)'))), BASELINE.stats.kpi);
+  // 예전 KPI 네 칸(악용 근거 · 예전 무기화 묶음 · PoC · AI 발견)의 숫자 — 남은 세 칸은 같은 뜻의 검색어로 그대로 센다.
+  // 예전 무기화 묶음(MSF · EDB · nuclei, has:msf)은 2026-11 필터 정리에서 지웠다.
+  const [kev, , poc, ai] = BASELINE.stats.kpi;
+  assert.deepEqual(['has:kev', 'has:poc', 'has:ai'].map(q => search(d, q).length), [kev, poc, ai]);
 });
 
 test('대시보드 — 추이 · 상관 · 최근 CVE · 동시 발생 행렬 · 관련 검색어 (숫자 = 목록)', () => {
@@ -340,7 +433,11 @@ test('목록 — 5칸, 출처가 확인한 것만 칩, 없음 · 미확인은 �
                    ['99.9', '99.99', '100.0', '12.34'], '1 미만 확률을 100% 로 반올림하지 않는다');
   assert.match(row(cve(8)), /class="df df-fix"[^>]*>수정 버전</, 'OSV 수정 버전');
   assert.doesNotMatch(row(cve(3)), /df-fix/, '수정 기록 없음은 빈칸 (상세에 기록 없음으로)');
-  assert.match(row(cve(1)), /class="df df-det"[^>]*>탐지 룰</);
+  assert.match(row(cve(1)), /class="df df-det" title="공개 탐지 룰: Sigma\.[^"]*">Sigma<\/span>/, '탐지 룰은 엔진 이름으로');
+  assert.doesNotMatch(row(cve(1)), />탐지 룰</, "엔진을 가리지 않는 '탐지 룰' 태그 하나는 없다");
+  assert.match(row(cve(2)), /class="df df-chk" title="nuclei 점검 템플릿[^"]*">nuclei<\/span>/, 'nuclei 는 점검 템플릿 모양으로 따로');
+  assert.doesNotMatch(row(cve(2)), /df-det/, 'nuclei 만 있으면 탐지 룰 태그는 없다');
+  assert.doesNotMatch(row(cve(9)), /df-det|df-chk|미확인/, '어떤 룰인지 모르는 행은 빈칸 (상세에서 미확인 사유)');
   assert.match(row(cve(4)), /ev-chip ev-exploit[^>]*><i><\/i>VulnCheck<b>외 1<\/b><\/span>/, "출처가 여럿이면 '외 N'");
   assert.match(row(cve(14)), /<td class="c-threat"[^>]*><span class="ev-chips">[^]*lc-badge lc-ACTIVE[^>]*>ACTIVE<em>/,
                '지원 상태는 알 때만 위협 신호 칸의 칩으로 (+ 릴리스 이름)');
@@ -431,6 +528,11 @@ test('자동완성 — 필드와 값을 제안한다', () => {
   const d = dashboard();
   const vals = f => d.run(`suggestValues(${JSON.stringify(f)}).map(x => x[0])`);
   assert.ok(vals('has').includes('cisa-kev'));
+  for (const v of ['snort', 'suricata', 'sigma', 'yara', 'splunk', 'nuclei', 'detection', 'weaponized', 'conflict']) {
+    assert.ok(vals('has').includes(v), `has:${v} 제안`);
+  }
+  for (const v of ['msf', 'rules', 'patched']) assert.ok(!vals('has').includes(v), `지운 예전 값 has:${v} 는 제안하지 않는다`);
+  assert.match(d.run("suggestValues('has').find(x => x[0] === 'nuclei')[1]"), /점검 템플릿 \(탐지 룰 아님\)/);
   assert.ok(vals('corr').includes('kev_eol'));
   assert.ok(vals('no').includes('patch'));
   assert.ok(vals('lifecycle').includes('eol'));
@@ -530,25 +632,31 @@ test("상세 — '자세히'는 그 신호의 출처 표만 그 줄 바로 아�
   }
   // 확인된 신호 — '자세히' 바로 뒤에 그 신호 칸
   assert.match(threat, /yes-row ans-weaponization">[\s\S]*?<button type="button" class="link-btn ev-toggle" data-panel="exploit" aria-expanded="false" aria-controls="d-panel-exploit">자세히<\/button><\/div><div class="ev-panel" id="d-panel-exploit" hidden><div class="ev-group[^"]*" id="d-ev-exploit">/);
-  assert.match(threat, /yes-row ans-detection">[\s\S]*?data-panel="detection"[^>]*>자세히<\/button><\/div><div class="ev-panel" id="d-panel-detection" hidden>[\s\S]*?class="rule-list"/,
-               '탐지 룰 칸에는 룰마다 한 줄인 목록');
+  // CVE-2 는 nuclei 점검 템플릿만 있다 — 탐지 룰은 '없음 · 점검 템플릿 있음' 칩, 누르면 같은 칸(룰 목록)에서 템플릿 줄
+  assert.doesNotMatch(threat, /yes-row ans-detection/, 'nuclei 만 있으면 확인된 신호 줄에 탐지 룰이 없다');
   assert.match(threat, /id="d-panel-detection"[\s\S]*?class="rule-eng">nuclei<small>점검 템플릿<\/small>[\s\S]*?href="https:\/\/github\.com\/projectdiscovery\/nuclei-templates\/blob\/main\/x\.yaml"[^>]*>원문 ↗/,
-               'rules 가 비어 있어도 신호 줄이 보여 주는 엔진(nuclei 템플릿)은 목록에 싣는다');
+               'rules 가 비어 있어도 nuclei 색인의 템플릿은 목록에 싣는다');
   assert.match(threat, /yes-row ans-lifecycle">[\s\S]*?<button type="button" class="link-btn is-jump" data-open="lifecycle">수명주기 상세<\/button><\/div>(?!<div class="ev-panel")/);
   // 없음 · 미확인 — 칩을 누르면 칩 줄 아래에서 그 신호 칸
   const line = threat.slice(threat.indexOf('class="st-line"'), threat.indexOf('class="st-panels"'));
-  assert.match(line, /없음 1 · 미확인 3/);
+  assert.match(line, /없음 2 · 미확인 3/);
   assert.match(line, /<button type="button" data-panel="exploitation" aria-expanded="false" aria-controls="d-panel-exploitation" class="st-chip st-no">실제 악용 <b>보고 없음<\/b><\/button>/);
   assert.match(line, /<button type="button" data-open="remediation" class="st-chip st-unknown" title="[^"]+">수정 버전 <b>미확인<\/b><\/button>/);
+  assert.match(line, /<button type="button" data-panel="detection" aria-expanded="false" aria-controls="d-panel-detection" class="st-chip st-no">탐지 룰 <b>없음 · 점검 템플릿 있음<\/b><\/button>/);
   const rest = threat.slice(threat.indexOf('class="st-panels"'));
-  assert.deepEqual([...rest.matchAll(/id="d-panel-(\w+)"/g)].map(m => m[1]), ['exploitation', 'automation', 'ransomware']);
+  assert.deepEqual([...rest.matchAll(/id="d-panel-(\w+)"/g)].map(m => m[1]), ['exploitation', 'automation', 'ransomware', 'detection']);
+  assert.match(rest, /id="d-panel-detection" hidden>[\s\S]*?class="rule-list"/, '탐지 룰 칸에는 룰마다 한 줄인 목록');
   d.run("showDetail('CVE-2026-0008')");
   assert.match(detailSec(d.el('modal-body').innerHTML, 'd-threat'), /yes-row ans-remediation">[\s\S]*?<button type="button" class="link-btn is-jump" data-open="remediation">조치 칸<\/button>/);
-  // 엔진을 모르는 '공식 룰 있음'만 있으면 목록 대신 출처 표
+  // 룰이 있다고만 기록되고 어떤 룰인지 없으면 미확인 — 목록 대신 출처 표에 사유
   d.run("showDetail('CVE-2026-0009')");
   const official = detailSec(d.el('modal-body').innerHTML, 'd-threat');
-  assert.match(official, /id="d-panel-detection" hidden>[\s\S]*?<table class="ev-table">[\s\S]*?공개 룰 색인[\s\S]*?공식 룰 있음/);
+  assert.match(official, /data-panel="detection"[^>]*class="st-chip st-unknown" title="공개 룰이 있다고만 기록되고 어떤 룰인지 남아 있지 않음[^"]*">탐지 룰 <b>미확인<\/b>/);
+  assert.match(official, /id="d-panel-detection" hidden>[\s\S]*?<table class="ev-table">[\s\S]*?공개 룰 색인[\s\S]*?어떤 룰인지 기록 없음/);
   assert.doesNotMatch(official, /class="rule-list"/);
+  // 탐지 룰과 점검 템플릿이 함께 있으면 — 확인된 줄에는 탐지 룰 출처만, 템플릿은 뒤에 따로
+  d.run(`Object.assign(allCves.find(c => c.id === 'CVE-2026-0001'), { has_nuclei_template: true }); ctxCache.clear(); showDetail('CVE-2026-0001')`);
+  assert.match(detailSec(d.el('modal-body').innerHTML, 'd-threat'), /yes-row ans-detection">[\s\S]*?<span class="y-val">Sigma · nuclei 점검 템플릿도 있음<\/span>/);
   // 확인된 신호가 없을 때도 칩으로 연다
   d.run("showDetail('CVE-2026-0005')");
   const none = detailSec(d.el('modal-body').innerHTML, 'd-threat');
@@ -757,6 +865,14 @@ test('조건 줄 — 조건 칩은 늘 모두 보이고(접지 않음) 칩에는
   const src = d.el('source-chips').innerHTML;
   assert.doesNotMatch(src, /<b>/, '필터 안 출처별 칩도 이름만');
   assert.match(src, /data-term="has:vulncheck-kev"[^>]*전체 \d+건\)">/);
+  // '필터' 안은 세 묶음 — 출처별 · 탐지 룰 엔진 · 기록 없음 · 미확인. 예전 묶음(has:msf · has:rules)은 없다.
+  const terms = id => [...d.el(id).innerHTML.matchAll(/data-term="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(terms('source-chips'), ['has:vulncheck-kev', 'has:ssvc-active', 'has:metasploit', 'has:edb', 'has:poc', 'has:nuclei', 'has:ai']);
+  assert.deepEqual(terms('engine-chips'), ['has:snort', 'has:suricata', 'has:sigma', 'has:yara', 'has:splunk']);
+  assert.deepEqual(terms('state-chips'), ['no:patch', 'unknown:eol']);
+  assert.match(d.el('engine-chips').innerHTML, /class="q-chip is-source g-defense" data-term="has:snort"\s+title="Snort 2 · Snort 3 탐지 룰 있음 \(ET Open · Snort Community\) \(검색어 has:snort, 전체 0건\)">\s*<i><\/i>Snort<\/button>/);
+  assert.match(d.el('engine-chips').innerHTML, /data-term="has:sigma"[^>]*전체 1건\)">\s*<i><\/i>Sigma</, '건수는 검색어로 센 값');
+  assert.match(src, /data-term="has:nuclei"[^>]*title="nuclei 점검 템플릿 있음\. [^"]*탐지 룰에는 넣지 않습니다/);
   // '필터' 숫자 = 필터 안에 들어 있는 조건만 — 검색어와 조건 줄에 늘 보이는 CVSS · EPSS 는 세지 않는다(나란히 보기도 같다)
   d.run("activeFilters.cvssMin = 7; activeFilters.vendor = 'Microsoft'; renderChips();");
   assert.equal(d.el('filter-count').textContent, '1');
