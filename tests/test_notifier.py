@@ -101,6 +101,27 @@ class HelperTests(unittest.TestCase):
         self.assertNotIn("원문 보기", nt._rule_block("YARA", {"source": "s", "url": "javascript:1"}))
 
 
+class OfficialRuleTests(unittest.TestCase):
+    """'공식 룰 발견' — 탐지 룰만 센다. 함께 찾은 nuclei 는 점검 템플릿으로 이름을 달리해 덧붙인다"""
+
+    def test_nuclei_is_labelled_as_a_check_template_and_not_counted(self):
+        sent = Sent()
+        rules = {"sigma": {"source": "SigmaHQ", "code": "title: x"},
+                 "network": [{"engine": "snort3", "source": "Snort 3 Community", "code": "alert http any any -> any any (sid:1;)"}],
+                 "nuclei": {"source": "nuclei-templates", "link_only": True,
+                            "url": "https://github.com/projectdiscovery/nuclei-templates/blob/main/x.yaml"}}
+        with mock.patch.object(nt.requests, "post", sent):
+            self.assertTrue(nt.SlackNotifier().send_official_rule_update("CVE-2026-0001", "제목", rules))
+        texts = [b["text"]["text"] for b in sent.payloads[0]["blocks"] if b.get("type") == "section"]
+        texts += [e["text"] for b in sent.payloads[0]["blocks"] if b.get("type") == "context" for e in b["elements"]]
+        joined = "\n".join(texts)
+        self.assertIn("*🟢 Sigma* (SigmaHQ)", joined)
+        self.assertIn("*🟢 SNORT3* (Snort 3 Community)", joined)
+        self.assertIn("*🟢 nuclei 점검 템플릿 (탐지 룰 아님)* (nuclei-templates)", joined)
+        self.assertIn("총 2개 엔진의 공식 룰 발견", joined, "nuclei 는 세지 않는다")
+        self.assertLess(joined.index("SNORT3"), joined.index("nuclei 점검 템플릿"), "탐지 룰 다음에")
+
+
 class SummaryTests(unittest.TestCase):
     def test_nothing_to_report_sends_nothing(self):
         sent = Sent()

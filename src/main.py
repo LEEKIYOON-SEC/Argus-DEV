@@ -476,9 +476,10 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
         if not candidates and not known:
             logger.info("재확인 대상 없음")
             return
-        logger.info(f"재확인 대상: {len(candidates)}건 · 스냅샷만 바꿀 CVE(이미 룰 있음) {len(known)}건")
+        logger.info(f"재확인 대상: {len(candidates)}건 · 스냅샷만 바꿀 CVE(이미 탐지 룰 있음) {len(known)}건")
 
         found_count = 0
+        template_only = 0
 
         for record in candidates:
             if deadline_ts is not None and time.time() > deadline_ts:
@@ -499,12 +500,11 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
                     })
                     continue
 
-                has_official = bool(
-                    rules.get('network')
-                    or any(rules.get(k) for k in ('sigma', 'yara', 'nuclei', 'splunk'))
-                )
+                # 알림은 탐지 룰(Sigma · Snort · Suricata · Splunk · YARA)이 처음 생겼을 때만. nuclei 점검 템플릿만 찾으면
+                # 화면에 싣도록 스냅샷만 남긴다 — 템플릿은 등급 판정의 T1 근거라 새로 생기면 즉시 알림이 따로 나간다.
+                kind = rule_refresh.found_kind(rules)
 
-                if has_official:
+                if kind == "detection":
                     found_count += 1
                     logger.info(f"✅ {cve_id}: 공식 룰 발견!")
 
@@ -517,6 +517,16 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
                         dashboard_url=_cve_url(cve_id),
                     )
 
+                    db.upsert_cve({
+                        "id": cve_id,
+                        "has_official_rules": True,
+                        "rules_snapshot": rules,
+                        "last_rule_check_at": now_iso,
+                        "updated_at": now_iso
+                    })
+                elif kind == "check":
+                    template_only += 1
+                    logger.info(f"{cve_id}: nuclei 점검 템플릿만 — 탐지 룰이 아니라 알림 없이 스냅샷만 남긴다")
                     db.upsert_cve({
                         "id": cve_id,
                         "has_official_rules": True,
@@ -547,7 +557,8 @@ def check_for_official_rules(db: Store, notifier: SlackNotifier,
             db, rule_manager.search_public_only, known,
             now=lambda: datetime.datetime.now(KST).isoformat(), soon=_recheck_soon,
             deadline_ts=deadline_ts)
-        logger.info(f"=== 공식 룰 재발견 체크 완료 (발견: {found_count}건 · 스냅샷 갱신: {refreshed}건) ===")
+        logger.info(f"=== 공식 룰 재발견 체크 완료 (탐지 룰 발견: {found_count}건 · nuclei 템플릿만: {template_only}건 · "
+                    f"스냅샷 갱신: {refreshed}건) ===")
 
     except Exception as e:
         logger.error(f"공식 룰 체크 프로세스 실패: {e}")
