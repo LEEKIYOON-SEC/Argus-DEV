@@ -67,11 +67,29 @@ test('수정 버전 — OSV 수정 버전 yes · 기록은 있는데 수정 없�
   assert.equal(states(row(), { packages: {} }).PATCH_AVAILABLE, 'unknown');
 });
 
-test('공개 탐지 — 룰 엔진 · 공식 룰 · nuclei 템플릿', () => {
+test('공개 탐지 — Sigma · Snort · Suricata · Splunk · YARA 만 탐지 룰, nuclei 점검 템플릿은 따로', () => {
   assert.equal(states(row({ rule_engines: ['suricata7'] })).PUBLIC_DETECTION, 'yes');
-  assert.equal(states(row({ has_official_rules: true })).PUBLIC_DETECTION, 'yes');
-  assert.equal(states(row({ has_nuclei_template: true })).PUBLIC_DETECTION, 'yes', '룰 색인보다 먼저 잡힌 nuclei 도 센다');
+  for (const e of ['sigma', 'snort2', 'snort3', 'suricata5', 'splunk', 'yara']) {
+    assert.equal(states(row({ rule_engines: [e] })).PUBLIC_DETECTION, 'yes', e);
+  }
+  assert.equal(states(row({ has_nuclei_template: true })).PUBLIC_DETECTION, 'no', 'nuclei 색인만 — 점검 템플릿은 탐지 룰이 아니다');
+  assert.equal(states(row({ rule_engines: ['nuclei'], has_official_rules: true })).PUBLIC_DETECTION, 'no',
+               '룰 색인의 nuclei 만 (공식 룰 표시도 nuclei 때문)');
+  assert.equal(states(row({ rule_engines: ['nuclei', 'sigma'], has_official_rules: true })).PUBLIC_DETECTION, 'yes');
+  assert.equal(states(row({ has_official_rules: true })).PUBLIC_DETECTION, 'unknown', '어떤 룰인지 남지 않았으면 단정하지 않는다');
+  assert.deepEqual(CTX.reasonsOf(row({ has_official_rules: true }), states(row({ has_official_rules: true })), { reasons: [] })
+    .PUBLIC_DETECTION, ['rules_unlisted']);
   assert.equal(states(row()).PUBLIC_DETECTION, 'no');
+  // 엔진 계열 · 점검 템플릿
+  const both = row({ rule_engines: ['suricata7', 'snort2', 'nuclei', 'yara', 'suricata5'] });
+  assert.deepEqual(CTX.ruleFamilies(both), ['snort', 'suricata', 'yara'], '계열 순서는 RULE_FAMILIES 순서, 판은 하나로');
+  assert.deepEqual(CTX.ruleEngines(both), ['suricata7', 'snort2', 'yara', 'suricata5'], 'nuclei 는 탐지 룰 엔진이 아니다');
+  assert.equal(CTX.hasCheckTemplate(both), true);
+  assert.equal(CTX.hasCheckTemplate(row({ has_nuclei_template: true })), true, 'nuclei 색인만 있어도');
+  assert.equal(CTX.hasCheckTemplate(row({ rule_engines: ['sigma'] })), false);
+  assert.deepEqual(CTX.RULE_FAMILIES.map(f => f.key), ['snort', 'suricata', 'sigma', 'yara', 'splunk']);
+  assert.equal(CTX.sourceFlags(row({ rule_engines: ['nuclei'] })).nuclei, true, '출처 화면 nuclei 건수 = has:nuclei');
+  assert.equal('rules' in CTX.sourceFlags(row()), false, '쓰지 않던 rules 값은 지웠다');
 });
 
 test('탐지 룰 라이선스 — 출처로 표기하고 옛 표기를 바로잡으며, 라이선스가 없는 YARA 는 링크만', () => {
@@ -299,7 +317,9 @@ test('데이터 품질 — 잘못된 ID · 중복 · KEV 불일치 · 링크 중
 test('검색어 해석 — has/no/unknown 키 · corr 코드 · release 형식', () => {
   const s = { PATCH_AVAILABLE: 'no', PUBLIC_EXPLOIT: 'yes', AUTOMATABLE: 'unknown' };
   assert.ok(CTX.stateQuery(s, 'patch', 'no'));
-  assert.ok(CTX.stateQuery(s, 'patched', 'no'), '기존 이름 patched 도 같은 신호');
+  assert.ok(!CTX.stateQuery(s, 'patched', 'no'), '예전 이름 patched · rules 는 지웠다 (2026-11 필터 정리)');
+  assert.ok(!CTX.stateQuery({ PUBLIC_DETECTION: 'yes' }, 'rules', 'yes'));
+  assert.ok(CTX.stateQuery({ PUBLIC_DETECTION: 'yes' }, 'detection', 'yes'));
   assert.ok(CTX.stateQuery(s, 'exploit', 'yes'));
   assert.ok(CTX.stateQuery(s, 'auto', 'unknown'));
   assert.ok(!CTX.stateQuery(s, 'bogus', 'yes'));

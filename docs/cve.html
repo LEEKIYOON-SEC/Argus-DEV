@@ -77,7 +77,8 @@
         <code>epss:&gt;=10</code><span>악용 확률 10% 이상. 상위 5%는 <code>has:high-epss</code></span>
         <code>sev:critical</code><span>심각도 (critical · high · medium · low · none)</span>
         <code>vendor:microsoft</code><span>벤더 이름에 포함 · <code>product:exchange</code> 제품 이름에 포함 · <code>cwe:502</code> 취약점 유형</span>
-        <code>has:cisa-kev</code><span>해당 정보가 있는 CVE. <code>kev</code> 악용 근거(CISA KEV · VulnCheck · SSVC active) · <code>cisa-kev</code> · <code>vulncheck-kev</code> · <code>ssvc-active</code> · <code>exploit</code> 공개 익스플로잇(EDB · MSF · PoC) · <code>weaponized</code> 무기화(MSF · EDB) · <code>metasploit</code> · <code>edb</code> · <code>poc</code> · <code>nuclei</code> · <code>auto</code> · <code>ransom</code> · <code>patch</code> · <code>detection</code> · <code>high-epss</code> · <code>critical</code> · <code>eol</code> · <code>ai</code> · <code>conflict</code></span>
+        <code>has:cisa-kev</code><span>해당 정보가 있는 CVE. <code>kev</code> 악용 근거(CISA KEV · VulnCheck · SSVC active) · <code>cisa-kev</code> · <code>vulncheck-kev</code> · <code>ssvc-active</code> · <code>exploit</code> 공개 익스플로잇(EDB · MSF · PoC) · <code>weaponized</code> 무기화(MSF · EDB) · <code>metasploit</code> · <code>edb</code> · <code>poc</code> · <code>auto</code> · <code>ransom</code> · <code>patch</code> · <code>detection</code> 탐지 룰(Sigma · Snort · Suricata · Splunk · YARA) · <code>high-epss</code> · <code>critical</code> · <code>eol</code> · <code>ai</code> · <code>conflict</code></span>
+        <code>has:snort</code><span>엔진별 탐지 룰. <code>snort</code> · <code>suricata</code> · <code>sigma</code> · <code>yara</code> · <code>splunk</code>. nuclei 점검 템플릿은 탐지 룰에 넣지 않고 <code>has:nuclei</code>로 따로 찾습니다. 예: <code>has:nuclei no:detection</code> nuclei만 있고 탐지 룰은 없는 CVE</span>
         <code>no:patch</code><span>출처가 '없음'으로 기록한 CVE. 예: OSV에 영향 패키지는 있지만 수정 버전 기록이 없음</span>
         <code>unknown:eol</code><span>출처에 정보가 없어 미확인인 CVE. <code>no:</code>와 <code>unknown:</code>은 kev · cisa-kev · exploit · auto · ransom · eol · patch · detection · high-epss · critical에 씁니다</span>
         <code>corr:kev_eol</code><span>신호 조합. kev_eol · kev_public_exploit · kev_automatable · kev_ransomware · high_epss_kev · critical_public_exploit · critical_eol · patch_exploited · exploit_no_fix · eol_no_fix</span>
@@ -87,7 +88,7 @@
         <code>recent:24h</code><span>최근 24시간(또는 <code>7d</code>) 안에 알림을 보냈거나 상태가 바뀐 CVE</span>
         <code>published:7d</code><span>최근 7일 안에 공개된 CVE</span>
         <code>kev:7d</code><span>최근 7일 안에 CISA KEV에 등재된 CVE · <code>due:3d</code> KEV의 미 연방기관 기한(미국 연방 민간기관의 조치 기한)이 3일 안에 돌아오는 CVE</span>
-        <code>tier:t0</code><span>알림 등급. t0 관측된 악용 · t1 무기화 임박 · t2 관찰 · t3 신호 없음. <code>has:msf</code>는 예전 묶음(Metasploit · Exploit-DB · nuclei)</span>
+        <code>tier:t0</code><span>알림 등급. t0 관측된 악용 · t1 무기화 임박 · t2 관찰 · t3 신호 없음</span>
       </div>
       <p class="syntax-eg">예: <code>has:cisa-kev lifecycle:eol</code> CISA KEV에 있으면서 영향 버전이 EOL인 CVE · <code>has:exploit no:patch</code> 공개 익스플로잇이 있는데 수정 버전 기록이 없는 CVE</p>
     </div>
@@ -238,6 +239,14 @@
           <div class="filter-group">
             <span class="filter-legend">출처별</span>
             <div class="quick-chips" id="source-chips" role="group" aria-label="출처별 조건. 누르면 검색어에 들어갑니다"></div>
+          </div>
+          <div class="filter-group">
+            <span class="filter-legend">탐지 룰 엔진</span>
+            <div class="quick-chips" id="engine-chips" role="group" aria-label="탐지 룰 엔진별 조건. 누르면 검색어에 들어갑니다"></div>
+          </div>
+          <div class="filter-group">
+            <span class="filter-legend">기록 없음 · 미확인</span>
+            <div class="quick-chips" id="state-chips" role="group" aria-label="기록 없음 · 미확인 조건. 누르면 검색어에 들어갑니다"></div>
           </div>
           <div class="filter-group">
             <span class="filter-legend">범위</span>

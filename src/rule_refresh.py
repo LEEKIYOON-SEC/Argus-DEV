@@ -9,8 +9,9 @@
 같은 색인으로는 CVE 마다 한 번만 본다: 마지막으로 본 시각이 색인을 만든 시각(generated_at)보다 SETTLE 이상 뒤면
 넘어간다. 만든 직후에 본 것은 배포 · 캐시 때문에 옛 색인으로 봤을 수 있어 한 번 더 본다.
 
-- 룰이 없던 CVE: 지금처럼 알림 예산(max_rule_recheck) 안에서 먼저 보고, 찾으면 Slack 을 보낸다.
-- 이미 룰이 있던 CVE: 알림 없이 스냅샷만 바꾼다 — '룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다.
+- 탐지 룰이 없던 CVE(nuclei 점검 템플릿만 있던 것 포함): 지금처럼 알림 예산(max_rule_recheck) 안에서 먼저 보고, 탐지 룰을
+  찾으면 Slack 을 보낸다. nuclei 만 찾으면 알림 없이 스냅샷만 남긴다.
+- 이미 탐지 룰이 있던 CVE: 알림 없이 스냅샷만 바꾼다 — '탐지 룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다.
 """
 import datetime
 import time
@@ -19,7 +20,26 @@ from typing import Callable, Dict, List, Optional, Tuple
 from logger import logger
 
 RULE_KEYS = ("network", "sigma", "yara", "nuclei", "splunk")
+# 탐지 룰 — 로그 · 트래픽 · 파일에서 공격을 찾는 룰. nuclei 는 대상에 요청을 보내 취약한지 확인하는 점검 템플릿이라 넣지 않는다
+# (화면의 PUBLIC_DETECTION 과 같은 기준, INVARIANTS §6 '필터 정리'). 알림 · 주간 보고가 쓴다. DB 의 has_official_rules 는
+# 예전처럼 룰 색인에서 무엇이든(nuclei 포함) 찾았다는 뜻이고, 이 구분은 저장된 스냅샷으로 한다(DB 를 고치지 않는다).
+DETECTION_KEYS = ("network", "sigma", "yara", "splunk")
+CHECK_KEYS = ("nuclei",)
 SETTLE = datetime.timedelta(hours=1)
+
+
+def has_detection(rules) -> bool:
+    """룰 묶음(rules_snapshot 꼴)에 탐지 룰이 하나라도 있는가."""
+    return isinstance(rules, dict) and any(rules.get(k) for k in DETECTION_KEYS)
+
+
+def found_kind(rules) -> Optional[str]:
+    """찾은 룰의 종류 — 'detection'(탐지 룰이 하나라도) · 'check'(nuclei 점검 템플릿만) · None(아무것도 없음)."""
+    if has_detection(rules):
+        return "detection"
+    if isinstance(rules, dict) and any(rules.get(k) for k in CHECK_KEYS):
+        return "check"
+    return None
 
 
 def _when(ts) -> Optional[datetime.datetime]:
@@ -37,7 +57,11 @@ def _order(row: Dict):
 
 def due(rows: Dict[str, Dict], built_at: str,
         missing: Callable[[str, object], bool]) -> Tuple[List[Dict], List[Dict]]:
-    """스냅샷에 지금 색인의 룰이 빠졌고 이 색인으로 아직 다시 보지 않은 CVE — (룰이 없던 것, 이미 룰이 있던 것)."""
+    """스냅샷에 지금 색인의 룰이 빠졌고 이 색인으로 아직 다시 보지 않은 CVE — (탐지 룰이 없던 것, 이미 탐지 룰이 있던 것).
+
+    나누는 기준은 저장된 스냅샷의 탐지 룰이다. has_official_rules 로 나누면 nuclei 만 있던 CVE 가 '이미 룰이 있던 것'이 되어,
+    나중에 Snort 룰이 생겨도 알림 없이 바뀌었다.
+    """
     built = _when(built_at)
     if built is None:
         return [], []
@@ -49,7 +73,7 @@ def due(rows: Dict[str, Dict], built_at: str,
             continue
         if not missing(row["id"], row.get("rules_snapshot")):
             continue
-        (known if row.get("has_official_rules") else fresh).append(row)
+        (known if has_detection(row.get("rules_snapshot")) else fresh).append(row)
     return sorted(fresh, key=_order), sorted(known, key=_order)
 
 
@@ -76,7 +100,7 @@ def refresh_known(db, search: Callable[[str], Tuple[Dict, bool]], rows: List[Dic
                   now: Callable[[], str], soon: Callable[[], str],
                   deadline_ts: Optional[float] = None,
                   clock: Optional[Callable[[], float]] = None) -> int:
-    """이미 룰이 있던 CVE 의 스냅샷을 지금 색인으로 다시 만든다. 알림은 보내지 않는다. 바꾼 건수를 돌려준다."""
+    """이미 탐지 룰이 있던 CVE 의 스냅샷을 지금 색인으로 다시 만든다. 알림은 보내지 않는다. 바꾼 건수를 돌려준다."""
     clock = clock or time.time
     done = 0
     for row in rows:

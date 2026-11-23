@@ -384,7 +384,7 @@ PoC 가 레코드 마지막 갱신 뒤에 생겼다. 색인에 새로 들어오�
 | **룰 인덱스 생성이 부분 실패하면 실패한 엔진만 직전 배포본에서 이월한다** (`build_rule_index.carry_missing`) | SigmaHQ 하나만 403 이어도 sigma 가 빠진 인덱스가 배포되고, 그걸 읽은 파이프라인이 해당 CVE 를 '룰 없음'으로 기록했다. 전부 실패하거나 이월할 직전본도 없으면 덮어쓰지 않고 종료 |
 | **룰 본문에서 CVE 는 출처가 적는 방식으로 찾는다** — `CVE-YYYY-N` 문자열에 더해 Snort · Suricata 의 `reference:cve,YYYY-N`, Sigma 태그 `cve.YYYY-N`, YARA 룰 이름 `CVE_YYYY_N` (`build_rule_index.cves_in`) | `CVE-` 문자열만 찾아 메시지에 CVE 번호가 없는 룰을 통째로 놓쳤다. 2026-10-22 실측: 네트워크 룰이 있는 CVE 2,185 → 3,417건(Snort 3 Community 17 → 1,031건), 추적 CVE 253건에 네트워크 룰이 새로 생기고 그중 226건은 화면에 룰이 하나도 없었다(예: CVE-2026-109618 의 Snort sid 67359 · 67375). Sigma · YARA 는 각 4건 |
 | 주석 처리된(기본으로 꺼진) 룰은 싣지 않는다 | 제조사가 기본으로 꺼 둔 룰이다. Snort 2.9 Community 는 룰 대부분이 이렇게 꺼져 있고, 넣으면 CVE 가 396건 더 늘어난다(같은 실측) |
-| **매시 재확인은 대시보드에 나오는 CVE 의 룰 스냅샷을 지금 색인과 직접 견준다 — 지금 색인으로 다시 찾으면 들어올 룰(`rule_manager.missing`)이 스냅샷에 없으면 이미 룰이 있어도 다시 본다. 같은 색인으로는 CVE 마다 한 번만 본다** (`rule_refresh`) | 재확인이 룰이 하나도 없는 CVE 만 봐서, 룰이 하나라도 있으면 새 룰이 색인에 들어와도 화면에 나오지 않았다. 처음 고친 방식은 색인이 직전 배포본보다 룰이 늘어난 CVE 를 목록(`grown`)으로 넘겼는데, 매시 실행이 그 목록을 다 보기 전에 색인을 다시 만들면 남은 CVE 를 잃었다 — 2026-10-22 운영 색인은 목록이 비어 CVE-2026-109618 의 Snort 룰이 화면에 나오지 않았다. 룰이 없던 CVE 는 지금처럼 알림 예산(`max_rule_recheck` 10건) 안에서 KEV · CVSS · EPSS 순으로 먼저 보고 Slack 을 보낸다. 이미 룰이 있던 CVE 는 알림 없이 `max_rule_refresh`(30건)씩 스냅샷만 바꾼다 — '룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다. 한 번만 보는 기준은 마지막으로 본 시각과 색인을 만든 시각(`generated_at`)이고, 만든 뒤 1시간 안에 본 것은 배포 · 캐시 때문에 옛 색인으로 봤을 수 있어 한 번 더 본다. 같은 날 운영 데이터(대시보드 14,457건 중 색인에 있는 3,577건)로 돌려 보면 처음에는 룰이 없던 351건 · 있던 404건이 대상이고, 매시 실행 36번이면 남는 것이 없다(Slack 351건, 화면의 엔진 1,205개가 늘고 빠지는 엔진 없음) |
+| **매시 재확인은 대시보드에 나오는 CVE 의 룰 스냅샷을 지금 색인과 직접 견준다 — 지금 색인으로 다시 찾으면 들어올 룰(`rule_manager.missing`)이 스냅샷에 없으면 이미 룰이 있어도 다시 본다. 같은 색인으로는 CVE 마다 한 번만 본다** (`rule_refresh`) | 재확인이 룰이 하나도 없는 CVE 만 봐서, 룰이 하나라도 있으면 새 룰이 색인에 들어와도 화면에 나오지 않았다. 처음 고친 방식은 색인이 직전 배포본보다 룰이 늘어난 CVE 를 목록(`grown`)으로 넘겼는데, 매시 실행이 그 목록을 다 보기 전에 색인을 다시 만들면 남은 CVE 를 잃었다 — 2026-10-22 운영 색인은 목록이 비어 CVE-2026-109618 의 Snort 룰이 화면에 나오지 않았다. 룰이 없던 CVE 는 지금처럼 알림 예산(`max_rule_recheck` 10건) 안에서 KEV · CVSS · EPSS 순으로 먼저 보고 Slack 을 보낸다. 이미 룰이 있던 CVE 는 알림 없이 `max_rule_refresh`(30건)씩 스냅샷만 바꾼다 — '룰이 없던 CVE 에서 발견' 알림의 뜻과 맞지 않는다. 한 번만 보는 기준은 마지막으로 본 시각과 색인을 만든 시각(`generated_at`)이고, 만든 뒤 1시간 안에 본 것은 배포 · 캐시 때문에 옛 색인으로 봤을 수 있어 한 번 더 본다. 같은 날 운영 데이터(대시보드 14,457건 중 색인에 있는 3,577건)로 돌려 보면 처음에는 룰이 없던 351건 · 있던 404건이 대상이고, 매시 실행 36번이면 남는 것이 없다(Slack 351건, 화면의 엔진 1,205개가 늘고 빠지는 엔진 없음) — 2026-11-23부터 '룰이 없던 · 있던'은 저장된 스냅샷의 **탐지 룰**(Sigma · Snort · Suricata · Splunk · YARA)로 가른다(`rule_refresh.has_detection` · `found_kind`, §6 '필터 정리'). nuclei 점검 템플릿만 있던 CVE 는 '없던 것'이라 나중에 탐지 룰이 생기면 Slack 을 보내고(전에는 `has_official_rules` 가 nuclei 로 켜져 알림 없이 바뀌었다), nuclei 만 새로 찾으면 알림 없이 스냅샷만 남긴다(템플릿은 등급 판정의 T1 근거라 즉시 알림이 따로 나간다). `has_official_rules` 는 예전처럼 무엇이든(nuclei 포함) 찾았다는 뜻이라 DB 를 고치지 않았고, 기존 재확인(7일마다 `has_official_rules = 0`)에는 nuclei 만 있는 CVE 가 들지 않는다 — 색인 비교(대시보드 90일 행)가 맡는다 |
 | **네트워크 룰은 색인에 있는 것을 다 싣고 엔진별로 묶는다** — 색인이 엔진마다 3건까지 담아 CVE 당 최대 12건 (`rule_manager._choose` — 스냅샷을 만들 때와 위에서 견줄 때 같은 것을 쓴다) | 처음에는 CVE 당 3건까지만 실었다. 색인은 Snort Community 를 ET Open 앞에 두어, 앞에서부터 3건을 고르면 같은 엔진의 룰이 자리를 채워 같은 운영 데이터로 이미 룰이 있던 CVE 113곳에서 화면의 엔진(주로 Suricata 7 · 5)이 빠졌다. 엔진마다 돌아가며 3건을 골라도 대시보드 CVE 432건에서 룰 1,814개가 화면에 나오지 않았다(예: CVE-2026-109619 는 Snort 2.9 · 3 에 3건씩 있는데 Snort 2.9 sid 67375 · Snort 3 sid 67360 · 67375 가 빠졌다). 다 실으면 cves.json 이 약 1.4MB(49.9MB 중) 늘고, 빠지는 룰은 없다 |
 | 룰 원문은 링크의 **줄 범위(`#L2-L31`)만** 싣는다(`rule_manager._cut`). 본문이 범위보다 긴 옛 스냅샷은 다시 받는다(`_overrun`) | YARA 는 한 파일에 여러 룰이 든다. 파일 앞 6000자를 통째로 실어 범위가 뒤쪽인 룰은 다른 룰의 본문이 나왔다(실측 66건 중 9건) |
 | 저장소에 연결하지 못하면 export 는 **아무 파일도 쓰지 않고 실패로 끝난다** | 빈 `cves.json` · `stats.json` 을 쓰면 배포 단계가 "이번 실행 생성분"으로 보고 대시보드를 비웠다. 쓰지 않으면 직전 배포본을 이어받는다 |
@@ -394,7 +394,7 @@ PoC 가 레코드 마지막 갱신 뒤에 생겼다. 색인에 새로 들어오�
 | 검색어 `cwe:` 는 **번호가 같은 것만** | 포함 여부로 보면 `cwe:79` 가 CWE-798 · CWE-1179 까지 잡았다 |
 | 인라인 `onclick` 코드에 데이터(CVE ID · 제품 이름)를 넣지 않는다 — `data-*` 에 싣고 `this.dataset` 으로 읽는다 | 이름의 역슬래시 · 따옴표가 코드로 읽힌다 |
 | CSV 에서 `= + - @` 로 시작하는 칸은 앞에 `'` 를 붙인다 | 스프레드시트가 제목 · 제품명을 수식으로 실행한다 |
-| 주간 리포트의 첫 줄은 "이번 주에 알렸거나 갱신된 추적 CVE"이고, 이번 주 공개분은 따로 센다 | `date` 는 처음 추적한 날이 아니라 마지막 알림 · 저장 시각이다. "신규"라고 세면 다시 저장된 옛 CVE 까지 들어갔다 |
+| 주간 리포트의 첫 줄은 "이번 주에 알렸거나 갱신된 추적 CVE"이고, 이번 주 공개분은 따로 센다 | `date` 는 처음 추적한 날이 아니라 마지막 알림 · 저장 시각이다. "신규"라고 세면 다시 저장된 옛 CVE 까지 들어갔다 '공개 탐지 룰 확보'는 탐지 룰 엔진이 있는 CVE 만 센다 — nuclei 점검 템플릿만 있거나 엔진 없이 공식 룰 표시만 있는 행은 세지 않는다(화면 `has:detection` 과 같은 기준, 2026-11-23) |
 | 받은 원본은 캐시에 먼저 저장하므로, **읽지 못한 캐시는 지운다**(`cache_drop`). Actions 캐시 키는 시간 단위 | 오류 페이지가 캐시 수명(24h) 동안 남아 색인이 비었다. 날짜 키로는 그날 첫 실행분만 저장돼 수명이 짧은 KEV · EPSS 를 매 실행 다시 받았다 |
 | PoC 색인은 **이번 UTC 시(時)에 받은 것만** 쓴다(`cache_get(since=this_hour_start())`). 시간 단위 캐시 키와 함께여야 한다 | 24시간 수명이면 하루 가까이 묵은 색인으로 판정할 수 있어, 공개 전에 올라온 PoC 도 놓칠 수 있다(§3). 수명을 1시간으로만 두면 시(時)의 첫 회차가 받지 않고 넘어가 그 시간 나머지 회차가 매번 다시 받을 수 있다. 날짜 단위 키에서는 5분 회차마다 7.5MB 를 다시 받는다 |
 | PoC README 는 모든 `### ` 제목을 블록 경계로 보고, CVE 형식인 제목만 색인한다 | 번호가 틀린 제목(`CVE-2026-30` 등 16개)을 경계로 안 보면 그 아래 링크가 바로 앞 CVE 에 붙었다(11건, 예: CVE-2024-0986 에 PAN-OS 익스플로잇 링크) |
@@ -439,7 +439,7 @@ PoC 저장소 수별 KEV 비율 (전 연도, PoC 색인 11,818건)
 | id 목록 조회 실패(`None`)는 **'전부 사라짐'이 아니다** | 그렇게 읽으면 대시보드가 통째로 비워진다 |
 | 행수 상한은 **추적 행** 기준이고, 대시보드 구간(90일) 안은 안 지운다 | 전체 행 기준이면 상태 비워진 옛 행이 상한을 먼저 채우고, 오래된 순 삭제가 살아 있는 26일짜리 KEV 로 넘어간다 |
 | `rules`는 실제로 룰이 있는 행에만 싣는다 (`rules_snapshot`은 빈 껍데기라도 truthy) | 실측 2,217건 중 2,081건(93.9%)이 빈 껍데기였다 |
-| **숫자는 세는 기준을 필터와 맞춘다** (`cveHasSignal` · `context.js`) | 타일이 티어 기준, 칩이 신호 기준이라 같은 말인데 숫자가 달랐다 |
+| **숫자는 세는 기준을 필터와 맞춘다** (`HAS_SOURCE` · `context.js`) | 타일이 티어 기준, 칩이 신호 기준이라 같은 말인데 숫자가 달랐다 |
 | **KPI 숫자는 그 칸의 검색어로 연 목록 건수로 센다** (`kpiCount` — 전체 데이터 전에는 같은 판의 `cve-context.json` · `stats.json`) | 칸 정의와 목록 정의를 따로 두면 언젠가 갈라진다. 실데이터로 KPI 6 · 상관 10 · 행렬 칸 36 · 행렬 줄/칸 전체 9 · 관련 검색어 6 — 67개 숫자를 브라우저에서 눌러 목록 건수와 대조했다(전부 일치) |
 | **필터 상태는 검색줄 한 곳에만 있다.** 조건 칩·대시보드 숫자는 누르면 검색어를 넣고 빼거나(칩), 다른 필터를 풀고 CVE Intelligence 로 이동해 검색어를 넣는다(`goToQuery`) | 조작 지점이 두 군데로 갈리면 어디서 무엇이 걸렸는지 알 수 없다. 누른 숫자와 열린 목록 건수가 달라진다 |
 
@@ -492,7 +492,8 @@ KEV 등재일은 `cve-evidence.json`(CI) 에만 있어 처음 쓸 때 받는다 
   칸 설명에 적는다(실측 5,351 · 1,728).
 - **이전**: 저장된 링크와 검색어(`has:kev` · `has:msf`)는 뜻이 바뀌지 않는다. 회귀 기준(`dashboard_baseline.json`)은 다시 만들지 않고
   이 세 칸(`stat-kev` · `stat-weapon` · `stat-24h-sub`)만 의도한 변경(`CHANGED_KPI`)으로 빼서 새 값을 따로 확인한다. 예전 네 칸의
-  숫자(`KPI_TILES` = `cveHasSignal`)도 그대로 대조한다.
+  숫자(`KPI_TILES` = `cveHasSignal`)도 그대로 대조한다. (2026-11-23 '필터 정리'에서 `has:msf` · `KPI_TILES` · `cveHasSignal` 을
+  지웠다 — 남은 악용 근거 · PoC · AI 발견 숫자는 같은 뜻의 검색어로 대조한다.)
 
 **화면 개편 2차 (2026-09-28) — 무엇 · 왜 · 영향**
 
@@ -557,7 +558,8 @@ KEV 등재일은 `cve-evidence.json`(CI) 에만 있어 처음 쓸 때 받는다 
 
 **화면 개편 4차 (2026-09-30) — 조건 줄 · 대시보드 배치**
 
-- **조건 줄 세 줄**: 1줄 심각도 / 2줄 조건 칩 / 3줄 CVSS ≥ · EPSS ≥ · 필터 버튼. 필터를 누르면 열리는 칸(출처별 · 범위)은 그 아래.
+- **조건 줄 세 줄**: 1줄 심각도 / 2줄 조건 칩 / 3줄 CVSS ≥ · EPSS ≥ · 필터 버튼. 필터를 누르면 열리는 칸(출처별 · 범위 —
+  2026-11-23 '필터 정리'부터 출처별 · 탐지 룰 엔진 · 기록 없음 · 미확인 · 범위)은 그 아래.
   넓은 목록과 나란히 보기가 같다 — 3차에서 나란히 보기에만 두었던 '조건을 필터 안으로 옮기기'는 없앴다(`placeListConditions`).
   '필터' 버튼 숫자는 필터 안에 든 조건만 센다(검색어 · 조건 줄에 늘 보이는 CVSS · EPSS 는 세지 않는다).
 - **조건 칩**: 10개를 늘 모두 보인다('조건 +N' · '접기' 없음). 칩에는 이름만 적고, 전체 건수(추적 중 CVE 전체에서 그 조건에 맞는 수,
@@ -590,7 +592,7 @@ KEV 등재일은 `cve-evidence.json`(CI) 에만 있어 처음 쓸 때 받는다 
 - **탐지 룰 칸**: 표 대신 룰마다 한 줄(`renderRuleList`) — 엔진 · 출처 · SID · 라이선스 표기(전문 링크 · 저작권 · 작성자) · 본문 ·
   원문 링크 · 복사. 본문은 '본문'으로 펼치고 `pre-wrap` 으로 끝까지 보인다(최대 260px, 넘으면 칸 안에서 스크롤). 신호 줄이 보여
   주는 엔진은 모두 싣는다 — `rules` 가 비고 nuclei 템플릿만 있는 CVE 66건(2026-09-28 데이터)도 줄로 나온다. 엔진을 모르는
-  '공식 룰 있음'만 있으면 예전 출처 표.
+  '공식 룰 있음'만 있으면 예전 출처 표(2026-11-23부터 '어떤 룰인지 기록 없음' · 미확인 — '필터 정리').
 - **룰 링크** (`CTX.ruleLink`): Sigma · Splunk · YARA · nuclei 는 색인이 준 url. Snort Community 는 snort.org 룰 문서
   `/rule-docs/<gid>-<sid>`(실측: 데이터의 SID 22개 중 20개에 문서, 나머지 2개는 '문서 없음' 화면 — 그대로 링크한다).
   ET Open 은 룰이 든 공식 분류 파일 `open/<판>/rules/emerging-<분류>.rules#:~:text=sid:<SID>;` — 분류는 msg 앞머리, 판은 엔진
@@ -599,6 +601,52 @@ KEV 등재일은 `cve-evidence.json`(CI) 에만 있어 처음 쓸 때 받는다 
   배포본 실측)에 없는 분류는 링크를 달지 않는다 — ET 가 분류를 새로 만들면 표를 고친다. 파일이 커서(대부분 1–6MB, Snort 2.9
   TROJAN 19.1MB · Suricata MALWARE 17.7MB) 링크 옆에 크기를 적는다. '출처별 근거' 표의 네트워크 룰 행도 같은 링크다.
 - **참고**: 네트워크 룰 본문은 색인에 있는 것을 다 싣는다(색인이 엔진마다 3개까지 담는다, `rule_manager._choose`) — 룰 목록도 그 룰들이다.
+
+**필터 정리 (2026-11-23) — 탐지 룰과 점검 템플릿 · 엔진별 필터 · 예전 필터 삭제 — 무엇 · 왜 · 영향 · 이전**
+
+- **왜**: 실측(운영 cves.json 18,562건, 지금 화면 코드를 그대로 돌림). '탐지 룰' 칩(`has:detection`) 3,838건 중 2,389건(62%)이
+  nuclei 점검 템플릿만 있는 CVE 였고, Sigma · Snort · Suricata · Splunk · YARA 룰이 있는 CVE 는 1,449건이었다. 목록 '탐지 · 수정'
+  칸은 엔진을 가리지 않고 '탐지 룰' 태그 하나라 nuclei 만 있어도 탐지 룰로 보였고, 엔진별로 거를 방법이 없었다. '필터' 안에는
+  예전 묶음 두 개가 남아 있었다 — '무기화 (예전 묶음)' `has:msf` 6,477건(MSF ∪ EDB ∪ nuclei), '공개 룰 (예전)' `has:rules` 3,838건.
+  `has:rules` 는 이 문서에 'nuclei 템플릿 제외'로 적혀 있었지만 룰 색인 자체가 nuclei 를 담고 있어(`rules_snapshot.nuclei` →
+  `rule_engines`, `has_official_rules` 도 nuclei 로 켜진다) `has:detection` 과 결과가 똑같았다. 예전 KPI 네 칸의 신호 버튼 코드
+  (`activeFilters.signals` · `cveHasSignal` · `KPI_TILES` · `HAS_LEGACY`)는 버튼이 HTML 에서 사라진 뒤 테스트만 쓰고 있었다.
+  `has:nuclei` 는 nuclei 색인 표시만 봐서 룰 색인에만 nuclei 가 있는 7건을 못 찾았다(상세 룰 목록에는 나왔다).
+- **탐지 룰과 점검 템플릿**: `PUBLIC_DETECTION`(탐지 룰) = Sigma · Snort · Suricata · Splunk · YARA 중 하나 이상(`CTX.ruleEngines`).
+  nuclei 는 대상에 요청을 보내 취약한지 확인하는 **점검 템플릿**이라 탐지 룰로 세지 않는다(`CTX.hasCheckTemplate`, `has:nuclei`).
+  룰 목록 · 근거 칸에는 지금처럼 함께 싣고 '점검 템플릿'으로 적는다. 룰이 있다고만 기록되고(`has_official_rules`) 어떤 룰인지 남지
+  않은 행은 nuclei 였을 수도 있어 미확인(`rules_unlisted`, 실측 0건). 위험 등급은 바꾸지 않는다 — nuclei 는 지금처럼 T1 근거다.
+- **엔진별 검색어**: `has:snort`(Snort 2 · 3) · `has:suricata`(5 · 7) · `has:sigma` · `has:yara` · `has:splunk` — 계열과 순서는
+  `CTX.RULE_FAMILIES` 한 곳. 판(Snort 2/3 · Suricata 5/7)으로는 나누지 않는다: Suricata 5 · 7 은 1,203건이 모두 같은 CVE 이고,
+  판은 상세 룰 목록에 나온다. `has:` 아래 둔 것은 `has:nuclei` · `has:metasploit` 처럼 출처 하나를 가리키는 값과 같은 자리라서다.
+  조합 예: `has:snort has:sigma`(둘 다) · `has:nuclei no:detection`(nuclei 만 있고 탐지 룰은 없음).
+- **화면**: '필터' 안을 세 묶음으로 — 출처별(VulnCheck KEV · SSVC active · Metasploit · Exploit-DB · PoC · nuclei · AI 발견) / 탐지 룰
+  엔진(Snort · Suricata · Sigma · YARA · Splunk) / 기록 없음 · 미확인(수정 기록 없음 · 지원 상태 미확인). 목록 '탐지 · 수정' 칸은
+  엔진 계열 이름 태그(셋까지, 나머지는 '외 N' — 넷 이상은 39건)와 nuclei 태그(점선)를 따로 단다. 칸 폭 104 → 150px(Snort ·
+  Suricata 가 한 줄에). 휴대폰 카드에서는 이 칸을 160px 안에서 줄바꿈한다 — 폭을 두지 않으면 태그가 많은 카드에서 오른쪽 칸이
+  한 줄 길이만큼 넓어져 CVE 번호 칸이 30px 로 눌렸다. 상세는 nuclei 만 있으면 '탐지 룰 없음 · 점검 템플릿 있음' 칩(누르면 룰 목록),
+  둘 다 있으면 탐지 룰 출처 뒤에 'nuclei 점검 템플릿도 있음'. 자동완성에 엔진 다섯 · `weaponized` · `conflict` 를 넣고
+  `msf` · `rules` 를 뺐다. 함께 고친 것: 휴대폰에서 '필터'를 열면 페이지가 가로로 넘쳤다(390px 화면에서 1,204px — 조건 칩 줄을 옆으로
+  미는 규칙이 '필터' 안 칩 묶음에도 걸렸다).
+- **지운 것**: 검색어 `has:msf` · `has:rules` · `has:patched`(화면에 없던 예전 이름, `has:patch` 와 같음)와 `no:` · `unknown:` 의
+  `rules` · `patched`, 예전 KPI 신호 버튼 코드 전부, 집계의 쓰지 않던 `rules` 출처 값. `has:kev` · `has:poc` · `has:auto` · `has:ai` 는
+  예전 경로를 거쳤는데 뜻은 그대로 두고 `HAS_SOURCE` 로 옮겼다(판단 모듈 없이도 행 값만으로 거른다).
+- **영향**(실측 같은 데이터): `has:detection` 3,838 → 1,449 · `has:nuclei` 3,050 → 3,057 · Snort 1,324 · Suricata 1,203 · Sigma 153 ·
+  Splunk 128 · YARA 66 · nuclei 만 2,389. 대시보드 전체 조합 표 · 많이 겹치는 조합의 탐지 룰 줄 · 칸이 1,449 기준으로 바뀐다. 신호 조합
+  10개는 탐지 룰을 쓰지 않아 그대로, 데이터 출처 화면의 룰 저장소별 건수와 CSV 내보내기(엔진 이름 그대로)도 그대로다. 출처 화면의
+  nuclei 건수는 `has:nuclei` 와 같아졌다(3,057). `has:kev` 6,085 · `has:poc` 4,151 · `has:auto` 8,030 · `has:ai` 191 은 그대로.
+- **백엔드도 같은 기준**: Slack '공식 룰 발견'은 탐지 룰이 처음 생겼을 때만 보낸다. nuclei 만 새로 찾으면 보내지 않고 스냅샷만
+  남긴다(템플릿은 등급 판정의 T1 근거라 새로 생기면 즉시 알림이 따로 나간다). nuclei 만 있던 CVE 에 탐지 룰이 처음 생기면
+  보낸다 — 전에는 `has_official_rules` 가 nuclei 로 켜져 '이미 룰이 있던 CVE'로 분류돼 알림 없이 바뀌었다. 알림에 nuclei 가
+  함께 있으면 '점검 템플릿 (탐지 룰 아님)'으로 탐지 룰 뒤에 붙이고 엔진 수에 넣지 않는다. 주간 리포트 '공개 탐지 룰 확보'도
+  탐지 룰 엔진이 있는 CVE 만 센다. DB 의 `has_official_rules` 는 뜻을 바꾸지 않았다(무엇이든 찾았다) — 가르는 것은 저장된
+  스냅샷이다(`rule_refresh.has_detection` · `found_kind`).
+- **이전**: 저장해 둔 링크에 `has:msf` · `has:rules` 가 있으면 0건이 된다. 같은 뜻의 새 검색어가 없거나(`has:msf` 는 MSF · EDB ·
+  nuclei 의 '또는'이라 검색어로 못 쓴다) 바꾸면 결과가 달라져서(`has:rules` → `has:detection` 은 nuclei 를 뺀다) 자동으로 바꾸지 않는다.
+  대신 `has:` · `no:` · `unknown:` 에 없는 값을 쓰면 조건 줄에 '지원하지 않는 조건 <입력한 그대로>'를 띄우고, 누르면 그 조각만 뺀다
+  (`unknownTerms`, 조건 수에는 넣지 않는다). 예전에는 오타(`has:foo`)도 아무 안내 없이 0건이었다. `has:constructor` · `has:__proto__` 처럼
+  객체 속성 이름과 같은 값이 전체 목록을 고르던 일도 함께 막았다 — 예전 `HAS_LEGACY[v]` 가 상속된 속성을 값으로 읽어 `cveHasSignal`
+  의 마지막 `return true` 로 갔다(변경 전 코드 실측: fixture 16건 모두). 이제 값은 자기 속성만 본다(`hasOwnProperty`).
 
 **취약점 유형(CWE)** — `docs/js/cwe.js`(이름 · 풀이 · 고르는 법)와 `docs/js/cwe-data.js`(MITRE CWE 목록에서 만든 공식 영문 이름 ·
 추상화 수준 · 분류 이름, `src/update_cwe.py`). 라이선스는 §9.
@@ -874,19 +922,19 @@ TZ=UTC node --test tests/*.test.js                          # 아래 여섯 파�
 | 파일 | 확인하는 것 |
 |:---|:---|
 | `tests/lifecycle.test.js` | `lifecycle.js` — 상태 계산(Python 과 같은 표) · 버전 → 사이클 · CPE/PURL/이름/규칙 매칭 · 검색어 값 |
-| `tests/context.test.js` | `context.js` — 신호 10종의 yes/no/unknown 경계 · 상관의 `!` · 근거 행렬 · 탐지 룰 라이선스 표기(출처 기준 · 옛 표기 바로잡기 · 라이선스 없는 YARA 는 링크만) · 같은 엔진의 룰도 온 곳이 다르면 근거 행을 나눔 · 룰 원문 링크(색인 url · ET Open 분류 파일 + SID 위치 · Snort Community 룰 문서 · 모르는 분류와 http(s) 가 아닌 주소는 링크 없음 · 근거 행도 같은 링크) · 집계 · 품질 점검 · CI 사전 계산이 브라우저 계산과 같은지(지문 · 직렬화 왕복) |
+| `tests/context.test.js` | `context.js` — 신호 10종의 yes/no/unknown 경계 · 상관의 `!` · 근거 행렬 · 탐지 룰 라이선스 표기(출처 기준 · 옛 표기 바로잡기 · 라이선스 없는 YARA 는 링크만) · 같은 엔진의 룰도 온 곳이 다르면 근거 행을 나눔 · 룰 원문 링크(색인 url · ET Open 분류 파일 + SID 위치 · Snort Community 룰 문서 · 모르는 분류와 http(s) 가 아닌 주소는 링크 없음 · 근거 행도 같은 링크) · 집계 · 품질 점검 · CI 사전 계산이 브라우저 계산과 같은지(지문 · 직렬화 왕복) · 탐지 룰은 Sigma · Snort · Suricata · Splunk · YARA 만(nuclei 점검 템플릿 제외, 어떤 룰인지 없으면 미확인 · 사유) · 엔진 계열(`RULE_FAMILIES` 순서 · 판은 하나로) · 예전 키 `patched` · `rules` 없음 |
 | `tests/evidence.test.js` | `build_context.js` 의 원 출처 날짜 — CSV 파싱 · 파이프라인과 같은 CVE 매칭 · 캐시 없음/일부 · 출처 불일치 · 출처별 집계 · 동시 발생 · 일별 심각도 · 최근 공개가 직접 센 값과 같은지 |
 | `tests/entities.test.js` | `entities.js` · `viewmodel.js` — 있음이면 근거가 이어지고(근거 id 가 엔티티에 있음) 있음이 아니면 근거가 없으며 모름은 사유가 있다 · 증거마다 출처 엔티티 · 유형 · 연결 방법 · 원 출처 날짜는 `cve-evidence.json` 에서만 · 제목/설명의 출처 · AI 글이 사실 엔티티에 없음 · 버전 범위 · KPI/행렬/상관 = 집계 · 출처 표는 외부 출처만 한 번씩(건수는 모르면 null) |
-| `tests/dashboard.test.js` | 화면 스크립트 전체를 가짜 DOM 에서 실행 — 변경 전 회귀 · KPI 6칸(숫자 = 검색어 목록 건수, 숫자 아래 변화) · 새 검색어(날짜 · 심각도 포함) · 최근 동향 카드 3장(KEV 카드는 등재일만 · 미 연방기관 기한 링크) · 대시보드 숫자(상관 · 행렬 · 줄/칸 전체 · 관련 검색어) = 목록 건수 · 사전 계산으로 먼저 그리기 · 목록(5칸 · 유형 칩 · 요약 조각 · 알림 시각 · 등급 구분 줄 · 지원 상태 칩 · '외 N' · 영향 버전 한 줄 표기(경계가 같은 구간))/최근 본 CVE(10건 · 이 브라우저에만 · 저장이 막혀도 동작)/조건 칩(늘 모두 펼침 · 칩에 숫자 없음, 건수는 설명에 · '필터' 숫자는 필터 안 조건만)/상세(등급 근거 · 제목 옆 유형 · 유형 칸 · KEV 등재 후 며칠 · 미 연방기관 기한 문구 · 원문 · 원 출처 날짜 · 출처 간 차이(관련 신호 칸 안 · CVSS 는 기술 정보) · 미확인 사유 · '자세히'는 그 줄 아래 그 신호 칸만(처음 닫힘 · 한 번에 하나 · 다시 누르면 닫힘 · 칩도 같은 칸 · EOL · 수정 버전은 그 칸으로 · 나란히 보기에서는 오른쪽 칸만 스크롤) · 탐지 룰 목록(룰마다 한 줄 · 라이선스 표기 · 본문은 눌러서 · ET Open · Snort Community 링크 · nuclei 템플릿만 있는 CVE 도 줄로 · 링크만 싣는 YARA · nuclei))/수명주기(분류 접힘 · 이름 격자 · 지원 중인 버전 먼저 · 제품에 있는 단계만 칸 · 검색(별칭 · 태그 통째로 · 숫자는 버전만) · 90일 안에 EOL = lifecycle.js 로 센 값 · 기준일이 바뀌면 다시 셈 · 목록 못 받음 · 이스케이프 · CVE 없음)/출처 화면(출처 표 · 이용 조건 링크) · 화면 전환 URL · 나란히 보기 · 방문 기록 · 검색 미리보기 · 테마 · 내보내기 스키마 |
+| `tests/dashboard.test.js` | 화면 스크립트 전체를 가짜 DOM 에서 실행 — 변경 전 회귀 · KPI 6칸(숫자 = 검색어 목록 건수, 숫자 아래 변화) · 새 검색어(날짜 · 심각도 포함) · 최근 동향 카드 3장(KEV 카드는 등재일만 · 미 연방기관 기한 링크) · 대시보드 숫자(상관 · 행렬 · 줄/칸 전체 · 관련 검색어) = 목록 건수 · 사전 계산으로 먼저 그리기 · 목록(5칸 · 유형 칩 · 요약 조각 · 알림 시각 · 등급 구분 줄 · 지원 상태 칩 · '외 N' · 영향 버전 한 줄 표기(경계가 같은 구간))/최근 본 CVE(10건 · 이 브라우저에만 · 저장이 막혀도 동작)/조건 칩(늘 모두 펼침 · 칩에 숫자 없음, 건수는 설명에 · '필터' 숫자는 필터 안 조건만)/상세(등급 근거 · 제목 옆 유형 · 유형 칸 · KEV 등재 후 며칠 · 미 연방기관 기한 문구 · 원문 · 원 출처 날짜 · 출처 간 차이(관련 신호 칸 안 · CVSS 는 기술 정보) · 미확인 사유 · '자세히'는 그 줄 아래 그 신호 칸만(처음 닫힘 · 한 번에 하나 · 다시 누르면 닫힘 · 칩도 같은 칸 · EOL · 수정 버전은 그 칸으로 · 나란히 보기에서는 오른쪽 칸만 스크롤) · 탐지 룰 목록(룰마다 한 줄 · 라이선스 표기 · 본문은 눌러서 · ET Open · Snort Community 링크 · nuclei 템플릿만 있는 CVE 도 줄로 · 링크만 싣는 YARA · nuclei))/수명주기(분류 접힘 · 이름 격자 · 지원 중인 버전 먼저 · 제품에 있는 단계만 칸 · 검색(별칭 · 태그 통째로 · 숫자는 버전만) · 90일 안에 EOL = lifecycle.js 로 센 값 · 기준일이 바뀌면 다시 셈 · 목록 못 받음 · 이스케이프 · CVE 없음)/출처 화면(출처 표 · 이용 조건 링크) · 화면 전환 URL · 나란히 보기 · 방문 기록 · 검색 미리보기 · 테마 · 내보내기 스키마 · 필터 정리(지운 예전 값은 0건 · 지원하지 않는 조건 안내(입력한 그대로 · 누르면 그 조각만 빠짐 · 조건 수에 넣지 않음) · 객체 속성 이름 값 · 예전 신호 버튼과 같은 뜻의 검색어 = 변경 전 결과) · 엔진별 탐지 룰(`has:snort` … · 판을 하나로 · 둘 다 · nuclei 는 룰 색인에만 있어도 · 목록 태그 순서와 '외 N' · nuclei 태그 · 칩 건수) · '필터' 안 세 묶음 · 자동완성(엔진 · `weaponized` · `conflict`, 예전 값 없음) |
 | `tests/ui.test.js` | `cve.html` 뼈대 — 화면 5개와 사이드바(최근 본 CVE 칸 없음) · 스크립트 의존 순서 · 목록 5칸 · 설명 버튼과 카드 · 접어 둔 칸의 패널 · 제품 수명주기 화면(검색 · 90일 버튼 · 분류 칸만, 옛 필터 · 스타일 없음) · 하단은 접지 않은 필수 고지만(CWE 저작권 포함) · 약관 원문(CVE™ · CWE™ = `cwe-data.js` 머리 · ET Open BSD) · 이용 조건은 데이터 출처 화면 한 곳(§9-1) · 화면 스크립트끼리 전역 이름이 겹치지 않음 · 조건 줄 세 줄 순서 · 대시보드 순서(주요 지표 → 최근 동향 → 신호 조합 · 30일 공개)와 2/3 · 1/3 격자 · 목록 · 상세 새 스타일(신호 칸 · 칩 줄 · 룰 목록, 한 줄 룰은 줄바꿈, '출처별로 보기' · 룰 상자 스타일 없음) · 라이트 토큰 두 블록(OS 설정 · 테마 버튼)이 같음 · 뷰 모델 없이도 목록 · 검색 · 상세 머리글 동작 |
 | `tests/cwe.test.js` | `cwe.js` — CWE 번호 정리(NVD 표기 제외) · 여러 개면 더 구체적인 것(추상화 수준 · 같으면 레코드 순서) · 한국어 이름 · 풀이 · 표에 없는 번호(별칭 → 30자 이하 이름 → 번호, 폐기 · 분류 표시) · 표의 번호가 모두 현재 MITRE 목록의 살아 있는 약점 |
 | `tests/test_update_cwe.py` | `update_cwe.py` — MITRE XML(네임스페이스 · zip) 파싱 · 모르는 추상화 수준 · 판 번호 없음 · 잘린 파일은 거부 · 번호순 출력 · 사본에 저작권 표기 · 약관 문구 · 바뀐 것 없으면 쓰지 않음 · 실패하면 기존 파일 그대로 · 저장소의 `cwe-data.js` 검증 |
 | `tests/test_lifecycle.py` | `update_lifecycle.py` — 응답 파싱(없는 값은 null) · 상태 표(JS 와 같은 표) · 날짜 칸 구분 · **요청 한 번(`/products/full`)으로 두 파일** · 잘린 응답 · 이름 없는 제품 · 제품 하나 문제면 그 제품만 이월 · 전체 목록이 20% 넘게 줄면 쓰지 않음 · 바뀐 날만 씀 · 실패하면 두 파일 모두 그대로 · 전체 목록과 추적 파일의 날짜가 같음 · 화면 fixture(`lifecycle_catalog_sample.json`) = 생성 결과 · 커밋된 두 파일 검증 |
 | `tests/test_export_facts.py` | export 의 `cve-facts.json` — 원문 제목 · 설명 · CNA · 제품 출처 · 번역 출처(`o`) 판정 · 증분 병합 · 배포본 없음(전량 export) · 조회 오류(쓰지 않고 배포본 이월) · 내보낼 때 EPSS 를 전량 파일로 다시 채움(이월된 행 포함 · 못 받거나 잘린 파일이면 DB 값 · 파일에 없는 CVE 는 그대로) |
 | `tests/test_rule_license.py` | `rule_license.py` — 출처별 라이선스(ET Open BSD · Snort Community GPLv2 · Sigma DRL · Splunk Apache) · YARA 원 저장소별 라이선스 · LICENSE 없는/모르는 저장소는 링크만 · 여러 번 적용해도 같음 · export 가 이월된 행까지 바로잡음 · 스냅샷이 링크만 둘 룰의 원문을 받지 않음 · 색인이 ET Open 의 BSD 범위 SID 만 실음 · 색인이 CVE 를 출처가 적는 방식(`reference:cve` · Sigma 태그 · YARA 룰 이름)으로 찾고 주석 처리된 룰은 뺌 · 스냅샷이 색인의 네트워크 룰을 다 싣고 엔진별로 묶음 |
-| `tests/test_rule_refresh.py` | `rule_refresh.py` · `rule_manager.missing` — 스냅샷에 지금 색인의 룰이 빠진 CVE 중 이 색인으로 아직 다시 보지 않은 것만(만든 뒤 1시간 안에 본 것은 한 번 더 · 시간대가 달라도 시각으로 비교) · KEV · CVSS · EPSS 순 · 룰이 없던 것은 알림 예산 안에서 먼저, 남는 자리는 기존 대상 · 이미 룰이 있던 것은 알림 없이 스냅샷만(못 찾거나 원문을 다 못 받으면 이전 스냅샷 유지) · 시간 예산 · 방금 만든 스냅샷은 빠진 룰이 없고(DB 를 거친 꼴), 같은 룰의 새 개정판은 빠진 것이 아니며, 색인의 룰이 없는 스냅샷(CVE 당 3건으로 자르던 때의 것) · 옮겨진 링크는 빠진 것 · 옛 색인(`generated_at` 없음)은 예전 동작 |
+| `tests/test_rule_refresh.py` | `rule_refresh.py` · `rule_manager.missing` — 스냅샷에 지금 색인의 룰이 빠진 CVE 중 이 색인으로 아직 다시 보지 않은 것만(만든 뒤 1시간 안에 본 것은 한 번 더 · 시간대가 달라도 시각으로 비교) · KEV · CVSS · EPSS 순 · 룰이 없던 것은 알림 예산 안에서 먼저, 남는 자리는 기존 대상 · 이미 룰이 있던 것은 알림 없이 스냅샷만(못 찾거나 원문을 다 못 받으면 이전 스냅샷 유지) · 시간 예산 · 방금 만든 스냅샷은 빠진 룰이 없고(DB 를 거친 꼴), 같은 룰의 새 개정판은 빠진 것이 아니며, 색인의 룰이 없는 스냅샷(CVE 당 3건으로 자르던 때의 것) · 옮겨진 링크는 빠진 것 · 옛 색인(`generated_at` 없음)은 예전 동작 · 탐지 룰과 nuclei 점검 템플릿 가르기(`found_kind` · `has_detection`, 키를 빠짐없이) · 스냅샷의 탐지 룰로 나눔(nuclei 만 있던 것 · 어떤 룰인지 없는 것은 탐지 룰이 없던 것) · 주간 리포트 '공개 탐지 룰 확보'(nuclei 만 · 엔진 없는 공식 룰 표시는 세지 않음) |
 | `tests/test_fast_lane.py` | `fast_lane.plan_watermark` — 실패는 워터마크를 붙잡고 세 번째에 격리 · 시간 부족은 세지 않음 · 성공하면 격리 해제 · 격리 재시도 실패는 시각 갱신 뒤 포기 · 격리 기간이 끝난 CVE 를 변경분에 추가 · 철회된 CVE 내리기 · 빈 따라잡기 구간의 워터마크 |
-| `tests/test_notifier.py` | `notifier.py` — 바깥 글 이스케이프 · section/header 길이 한도 · 쓸 수 있는 첫 참고 링크만 버튼으로 · 4xx 는 재시도하지 않고 429 는 재시도 · 보낼 것이 없으면 요약을 보내지 않음 |
+| `tests/test_notifier.py` | `notifier.py` — 바깥 글 이스케이프 · section/header 길이 한도 · 쓸 수 있는 첫 참고 링크만 버튼으로 · 4xx 는 재시도하지 않고 429 는 재시도 · 보낼 것이 없으면 요약을 보내지 않음 · '공식 룰 발견'은 탐지 룰만 세고 함께 찾은 nuclei 는 '점검 템플릿 (탐지 룰 아님)'으로 탐지 룰 뒤에 덧붙임 |
 | `tests/test_signal_snapshot.py` | PoC 색인 — 별칭(주인 3명 이상 · 표기는 색인 전체에서 · 대문자로 이어 붙인 이름 · 페이로드 이름 제외 · nuclei · Metasploit 이름) · 저장소 수 · 링크 · 공개일 파싱(날짜 없는 제목 · 링크 없는 제목 · 번호가 틀린 제목) · 이번 시(時)에 받은 것만 재사용 · `cache_get(since=)` · PoC 소스 최초 기록 예외(공개 90일 이내 · 날짜 없음 · 추적 안 함만, 최신순으로 여러 회차에 걸쳐, 전부면 기록만) · 다른 소스의 순서 · 재시드가 PoC 스냅샷을 남겨 둠 · `WEAPONIZABLE_CWE` 의 CWE-288 과 메모리 손상 제외 |
 | `tests/test_export_facts.py` 의 `AttentionRefreshTests` | export 의 별칭 · PoC 수 갱신 — 이어받은 행도 지금 색인으로 · 등급은 그대로 · 판정 때 PoC 가 없던 행은 PoC 값을 빼고 · nuclei 이름은 PoC 없이도 · 색인을 못 읽으면 그대로 |
 | `tests/dashboard.test.js` 의 별칭 테스트 2개 | 목록 배지(출처 · 다른 이름 · 저장소 수) · 별칭 검색 · `poc:` 검색어 · 상세 배지와 PoC 행 저장소 수 · 화제 CVE 칸(공개 90일 이내 · 많은 순) · 뷰 모델 없이도 배지 · 검색 |
@@ -901,8 +949,12 @@ Python·JS 가 같은 표(`lifecycle_status_cases.json`)를 확인한다.
 `tests/fixtures/dashboard_baseline.json` 은 수명주기 기능을 넣기 **전** 커밋(`0f68020`)의
 `cve-dashboard.js` 로 만든 회귀 기준이다. 목록·상세는 화면을 새로 짰으므로 HTML 이 아니라 **의미로** 비교한다 —
 검색·필터·정렬·페이지 결과(행 ID 와 순서) · 통계 · 필터 목록 · CSV/JSON/STIX 내용 · 상세가 연 CVE(ID·제목).
-예외는 둘이다. `FIXED_BUGS`(`has:nuclei` · `has:edb` · `has:ransom` · `has:foo`) — 옛 코드는 모르는 `has:` 값을
+예외는 셋이다. `FIXED_BUGS`(`has:nuclei` · `has:edb` · `has:ransom` · `has:foo`) — 옛 코드는 모르는 `has:` 값을
 **전부 통과**시켰다(`has:foo` 가 전체 목록). `CHANGED_KPI`(`stat-kev` · `stat-weapon` · `stat-24h-sub`) — §6 의 KPI 변경.
+`REMOVED` — §6 '필터 정리'에서 지운 것(검색어 `has:msf` · `has:rules` · `has:patched` · `has:kev has:rules`, 신호 버튼 필터
+`signal*` 6개, 신호 버튼으로 건 조건 줄 `ui.chips` · `filterCount` · `afterClearSignal`, `stats.kpi`). 같은 뜻의 새 검색어가 있는
+것(`signalKev` = `has:kev` · `signalAuto` · `signalAi` · `signalPatched` = `has:patch`, 예전 KPI 의 악용 근거 · PoC · AI 발견 숫자)은
+'필터 정리' 테스트가 기준 파일 값과 대조한다. 필터 `combo` 는 신호 버튼 대신 검색어 `has:kev` 로 걸어 그대로 비교한다.
 영향 제품 순위(`product-dist`)는 툴팁 문구만 바꿔서 `title` 속성을 빼고 비교한다(칸 구성 · 숫자 · 누르면 거는 필터는 그대로).
 고친 동작 · 바꾼 값은 같은 파일의 별도 테스트가 확인한다. fixture `dashboard_stats.json` 의 `recent_24h` 는 2 → 5 로 고쳤다 —
 fixture 의 날짜로 export 규칙을 적용하면 5건인데 손으로 적은 2 가 남아 있었다(KPI 숫자 = 목록 건수를 확인하려면 둘이 같아야 한다).
@@ -1111,12 +1163,14 @@ exploit 이 있나 · 자동화되나 · 랜섬웨어에 쓰였나 · 영향 릴
 | `RANSOMWARE` | `ransom` | KEV knownRansomwareCampaignUse=Known | **없다** — 출처가 '아니다'를 주지 않는다 | KEV 의 Unknown · KEV 미등재 |
 | `EOL_AFFECTED` | `eol` | 영향 릴리스 중 하나라도 오늘 기준 EOL | **모든** 영향 항목이 사이클까지 연결되고 상태가 알려졌는데 EOL 없음 | 그 밖 전부(사유 표기) |
 | `PATCH_AVAILABLE` | `patch` · `patched` | OSV 에 수정 버전 1개 이상 | OSV 기록은 있는데 수정 버전 없음 | OSV 기록 없음 |
-| `PUBLIC_DETECTION` | `detection` · `rules` | Sigma · Snort · Suricata · Splunk · YARA 룰, 공식 룰, nuclei 점검 템플릿 중 하나 | 없음 | — |
+| `PUBLIC_DETECTION` | `detection` | Sigma · Snort · Suricata · Splunk · YARA 룰 중 하나 (nuclei 점검 템플릿은 넣지 않는다) | 없음 (nuclei 만 있는 것 포함) | 룰이 있다고만 기록되고 어떤 룰인지 없음 (`rules_unlisted`) |
 | `HIGH_EPSS` | `high-epss` | 백분위 ≥ 0.95 (백분위가 없으면 확률 ≥ 9.3% — `risk.py` 와 같은 기준) | 그 미만 | 미채점(확률·백분위 모두 0) |
 | `CRITICAL_CVSS` | `critical` | CVSS ≥ 9.0 | 9.0 미만 | 점수 없음(0) |
 
-nuclei 는 대상에 요청을 보내는 **점검 템플릿**이라 공개 exploit 이 아니라 탐지 쪽에 두고, 상세에서 '공격 탐지 룰이
-아님'을 따로 적는다. EXPLOITATION_CONFIRMED 는 VulnCheck KEV 를 포함하므로 CISA KEV 보다 넓다(아래 실측).
+nuclei 는 대상에 요청을 보내는 **점검 템플릿**이라 공개 exploit 이 아니고 탐지 룰도 아니다 — 탐지 룰 칸(룰 목록 · 근거)에
+함께 싣되 탐지 룰로 세지 않고 '점검 템플릿'으로 적는다(2026-11-23 §6 '필터 정리', 검색은 `has:nuclei`). 엔진별 검색어
+`has:snort` · `has:suricata` · `has:sigma` · `has:yara` · `has:splunk` 은 `CTX.RULE_FAMILIES` 를 쓴다.
+EXPLOITATION_CONFIRMED 는 VulnCheck KEV 를 포함하므로 CISA KEV 보다 넓다(아래 실측).
 
 EOL 의 no 는 **항목 단위**로 확인한다. `reduceMatch` 는 사이클이 하나라도 이어진 제품을 '사이클 특정 불가' 목록에서 빼지만
 (표시가 겹치지 않게), 뺀 항목은 `partial` 에 남기고 그것이 있으면 no 가 아니라 unknown 이다 — 버전을 못 읽은 그 항목이
@@ -1182,7 +1236,7 @@ Signal(context.js 판정) ─derived_from─▶ Evidence · Score · Cycle    Co
 | `cvss:>=9` · `cvss:<4` · `cvss:=9.8` | CVSS 기본 점수 (`>=` `<=` `>` `<` `=`) |
 | `epss:>=10` | 악용 확률 **퍼센트** 단위(`10` = 10%). 상위 5% 는 `has:high-epss` |
 | `tier:t0`~`t3` · `vendor:` · `product:` · `cwe:79` | 기존 그대로 |
-| `has:<키>` | 아래 세 부류. **모르는 값은 아무것도 통과시키지 않는다**(옛 코드는 전부 통과시켰다) |
+| `has:<키>` | 아래 두 부류. **모르는 값은 아무것도 통과시키지 않고** 조건 줄에 '지원하지 않는 조건'으로 알린다(옛 코드는 전부 통과시켰다) |
 | `no:<신호 키>` · `unknown:<신호 키>` | 신호 표의 키만 받는다 — 출처가 '아니다'라고 한 것 / 알 수 없는 것 |
 | `corr:<코드>` | 상관 코드(`corr:kev_eol` · `corr:kev-eol`) |
 | `lifecycle:` · `eol:<30d` · `release:<제품>/<사이클>` | §12 |
@@ -1190,16 +1244,18 @@ Signal(context.js 판정) ─derived_from─▶ Evidence · Score · Cycle    Co
 | `recent:24h` · `recent:7d` | Argus 시각(`date`)이 export 시각(`stats.generated_at`) 기준 그 안인 것 — KPI '24시간 알림·갱신'과 같은 규칙 |
 | `sev:critical` · `published:7d` · `kev:7d` · `due:3d` | 심각도 · CVE 공개일 · KEV 등재일 · KEV 미 연방기관 기한 — §6 '날짜 검색어' |
 
-`has:` 값의 세 부류:
+`has:` 값의 두 부류:
 
-- **예전 값(뜻 그대로)**: `kev`(= 악용 근거) · `msf`(Metasploit · Exploit-DB · nuclei — 옛 '무기화' 칩 기준) · `poc` · `rules`
-  (룰 엔진 · 공식 룰 — nuclei 템플릿 제외) · `auto` · `ai`(AI 발견) · `patched`
-- **출처 하나**: `cisa-kev` · `vulncheck-kev` · `ssvc-active` · `metasploit` · `edb` · `nuclei` · `ransom` ·
-  `weaponized`(Metasploit ∪ Exploit-DB — KPI '무기화') · `conflict`(출처 간 불일치가 하나라도 있음)
+- **출처 하나 · 엔진 계열** (`HAS_SOURCE`, 판단 모듈 없이 행 값으로 — 엔진 계열 · `conflict` 만 판단 모듈이 있어야 한다):
+  `kev`(= 악용 근거, CISA KEV · VulnCheck · SSVC active) · `cisa-kev` · `vulncheck-kev` · `ssvc-active` · `metasploit` · `edb` ·
+  `poc` · `nuclei`(점검 템플릿 — 룰 색인에만 있는 것 포함) · `auto` · `ai`(AI 발견) · `ransom` ·
+  `weaponized`(Metasploit ∪ Exploit-DB — KPI '무기화') · `conflict`(출처 간 불일치가 하나라도 있음) ·
+  `snort` · `suricata` · `sigma` · `yara` · `splunk`(탐지 룰 엔진 계열, 판은 나누지 않는다)
 - **파생 신호**: 신호 표의 나머지 키(`exploit` · `eol` · `patch` · `detection` · `high-epss` · `critical` · `exploited` · `automatable`)
 
-그래서 `has:msf` 는 `has:exploit`(EDB · MSF · PoC)와도 `has:metasploit`(MSF 만)와도 다르고, `has:rules` 는 `has:detection`
-보다 nuclei 템플릿만 있는 CVE 만큼 좁다 — 예전 저장 링크·습관이 깨지지 않게 둔 것이다.
+예전 값 `msf`(Metasploit · Exploit-DB · nuclei — 옛 '무기화' 칩) · `rules`(룰 색인 — 실제로는 nuclei 도 담아 `detection` 과 같았다) ·
+`patched`(= `patch`)는 2026-11-23 §6 '필터 정리'에서 지웠다. `has:` · `no:` · `unknown:` 에 없는 값을 쓰면 조건 줄에
+'지원하지 않는 조건'으로 알린다.
 **`lifecycle:unknown` 과 `unknown:eol` 은 다르다**: 앞은 알려진 상태가 **하나도 없는** CVE, 뒤는 EOL 인지 **단정할 수
 없는** CVE다. ACTIVE 릴리스 하나 + 추적 밖 제품 하나인 CVE 는 `lifecycle:active` 이면서 `unknown:eol` 이다.
 

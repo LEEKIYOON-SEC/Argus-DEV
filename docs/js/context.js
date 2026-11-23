@@ -46,6 +46,16 @@
   const ENGINE_ORDER = ['sigma', 'suricata7', 'suricata5', 'snort3', 'snort2', 'splunk', 'yara', 'nuclei'];
   const NETWORK = new Set(['snort2', 'snort3', 'suricata5', 'suricata7']);
   const engineInfo = e => ENGINES[e] || { label: e, kind: 'detect', source: e };
+  const isCheck = e => engineInfo(e).kind === 'check';
+  // 탐지 룰 엔진 계열 — 검색어 has:<key> · 목록 태그 · 필터 칩이 이 순서를 쓴다. 판(Snort 2/3 · Suricata 5/7)은 나누지 않는다
+  // (실측 2026-11-23: Suricata 5 · 7 은 1,203건이 모두 같은 CVE). nuclei 는 점검 템플릿이라 넣지 않는다.
+  const RULE_FAMILIES = [
+    { key: 'snort', label: 'Snort', engines: ['snort2', 'snort3'] },
+    { key: 'suricata', label: 'Suricata', engines: ['suricata5', 'suricata7'] },
+    { key: 'sigma', label: 'Sigma', engines: ['sigma'] },
+    { key: 'yara', label: 'YARA', engines: ['yara'] },
+    { key: 'splunk', label: 'Splunk', engines: ['splunk'] },
+  ];
 
   /* ---------- 신호 정의 (코드 · 질문 · 정의 · 검색어) ---------- */
 
@@ -70,8 +80,8 @@
       question: '수정 버전이 있는가',
       def: 'OSV에 이 CVE의 수정 버전이 하나 이상 있는 경우. OSV 기록은 있는데 수정 버전이 없으면 없음, OSV 기록이 없으면 미확인입니다' },
     { code: 'PUBLIC_DETECTION', group: 'detection', short: '탐지 룰', key: 'detection',
-      question: '공개된 탐지 룰이나 점검 템플릿이 있는가',
-      def: 'Sigma · Snort · Suricata · Splunk · YARA 룰 또는 nuclei 점검 템플릿. Argus가 색인하는 공개 저장소 기준입니다' },
+      question: '공개된 탐지 룰이 있는가',
+      def: 'Sigma · Snort · Suricata · Splunk · YARA 룰 중 하나 이상. Argus가 색인하는 공개 저장소 기준입니다. nuclei 점검 템플릿은 대상에 요청을 보내 취약한지 확인하는 템플릿이라 넣지 않습니다' },
     { code: 'HIGH_EPSS', group: 'scores', short: 'EPSS 상위 5%', key: 'high-epss',
       question: '악용 확률 예측이 높은가',
       def: 'EPSS 백분위 95 이상(백분위가 없으면 확률 9.3% 이상, 알림 판정과 같은 기준). 예측값이며 악용이 확인됐다는 뜻은 아닙니다' },
@@ -80,8 +90,8 @@
   ];
   const SIGNAL = Object.fromEntries(SIGNALS.map(s => [s.code, s]));
   const SIGNAL_BY_KEY = Object.fromEntries(SIGNALS.map(s => [s.key, s.code]));
-  Object.assign(SIGNAL_BY_KEY, { patched: 'PATCH_AVAILABLE', rules: 'PUBLIC_DETECTION', exploited: 'EXPLOITATION_CONFIRMED',
-                                 automatable: 'AUTOMATABLE' });
+  // 같은 신호의 다른 이름. 예전 값(patched · rules)은 2026-11 필터 정리에서 지웠다(INVARIANTS §6).
+  Object.assign(SIGNAL_BY_KEY, { exploited: 'EXPLOITATION_CONFIRMED', automatable: 'AUTOMATABLE' });
 
   // 신호 조합 — 두 신호가 모두 yes 일 때만 만든다. '!' 는 명시적 no (unknown 은 해당 없음).
   const CORRELATIONS = [
@@ -120,6 +130,7 @@
     unresolved: '제품은 찾았지만 영향 버전이 어느 릴리스인지 정하지 못함',
     status_unknown: '제조사 일정에 보안·확장 지원 단계가 없어 상태를 정하지 못함',
     lifecycle_unloaded: '수명주기 데이터를 불러오지 못함',
+    rules_unlisted: '공개 룰이 있다고만 기록되고 어떤 룰인지 남아 있지 않음 (nuclei 점검 템플릿일 수 있음)',
   };
 
   /* ---------- 기본 판정 (목록·검색·통계가 쓰는 빠른 경로) ---------- */
@@ -153,10 +164,34 @@
     return t(hasFix(pkgMap));
   }
 
+  // 룰 목록에 싣는 엔진 전부 — 탐지 룰과 점검 템플릿(nuclei)을 함께. 신호 · 검색어는 아래 둘로 나눠 쓴다.
   function detectionEngines(cve) {
     const engines = [...(cve.rule_engines || [])];
     if (cve.has_nuclei_template && !engines.includes('nuclei')) engines.push('nuclei');
     return engines;
+  }
+
+  // 탐지 룰 엔진만 (점검 템플릿 제외) — PUBLIC_DETECTION 과 엔진별 검색어가 쓴다.
+  function ruleEngines(cve) {
+    return detectionEngines(cve).filter(e => !isCheck(e));
+  }
+
+  // 점검 템플릿(nuclei)이 있는가 — nuclei 색인에서 왔든 룰 색인에서 왔든.
+  function hasCheckTemplate(cve) {
+    return detectionEngines(cve).some(isCheck);
+  }
+
+  // 탐지 룰 엔진 계열 키(RULE_FAMILIES 순서). 계열을 모르는 엔진은 넣지 않는다.
+  function ruleFamilies(cve) {
+    const found = new Set(ruleEngines(cve));
+    return RULE_FAMILIES.filter(f => f.engines.some(e => found.has(e))).map(f => f.key);
+  }
+
+  // 공개 탐지 룰 — 탐지 룰 엔진이 하나라도 있으면 yes. 룰이 있다고만 기록되고(has_official_rules) 어떤 룰인지 남지
+  // 않은 행은 nuclei 였을 수도 있어 단정하지 않는다(unknown, 실측 2026-11-23 0건).
+  function detectionState(cve) {
+    if (ruleEngines(cve).length) return 'yes';
+    return cve.has_official_rules && !detectionEngines(cve).length ? 'unknown' : 'no';
   }
 
   // lifecycle: { entries, unresolved, untracked, partial } (lifecycle.js reduceMatch 결과) · products · today
@@ -201,7 +236,7 @@
       RANSOMWARE: cve.is_kev_ransomware ? 'yes' : 'unknown',
       EOL_AFFECTED: lcf.state,
       PATCH_AVAILABLE: patchState(d.packages),
-      PUBLIC_DETECTION: t(detectionEngines(cve).length > 0 || cve.has_official_rules),
+      PUBLIC_DETECTION: detectionState(cve),
       HIGH_EPSS: epssHigh(cve),
       CRITICAL_CVSS: f.cvss === null ? 'unknown' : t(f.cvss >= CVSS_CRITICAL),
     };
@@ -210,8 +245,9 @@
 
   // 출처 하나 단위의 사실 — KPI·출처 화면이 센다. 신호(위)는 이것들을 증거 유형으로 묶은 것이다.
   // weaponized: 무기화된 exploit 코드 = Metasploit 모듈 ∪ Exploit-DB. PoC 저장소와 nuclei(점검 템플릿)는 넣지 않는다.
+  // nuclei: 점검 템플릿이 있는 CVE(룰 색인에만 있는 것 포함, has:nuclei 와 같다).
   const SOURCE_FLAGS = ['cisa_kev', 'vulncheck_kev', 'ssvc_active', 'ssvc_assessed', 'metasploit', 'exploit_db',
-                        'weaponized', 'poc', 'nuclei', 'rules', 'ai_discovered', 'epss_scored', 'cvss_scored'];
+                        'weaponized', 'poc', 'nuclei', 'ai_discovered', 'epss_scored', 'cvss_scored'];
 
   function sourceFlags(cve) {
     const msf = !!cve.has_metasploit_module, edb = !!cve.has_public_exploit;
@@ -219,8 +255,7 @@
     return {
       cisa_kev: !!cve.is_kev, vulncheck_kev: !!cve.is_vulncheck_kev, ssvc_active: cve.ssvc_exploitation === 'active',
       ssvc_assessed: !!(cve.ssvc_exploitation || cve.ssvc_automatable), metasploit: msf, exploit_db: edb,
-      weaponized: msf || edb, poc: !!cve.has_poc, nuclei: !!cve.has_nuclei_template,
-      rules: (cve.rule_engines || []).length > 0 || !!cve.has_official_rules, ai_discovered: !!cve.ai_discovered,
+      weaponized: msf || edb, poc: !!cve.has_poc, nuclei: hasCheckTemplate(cve), ai_discovered: !!cve.ai_discovered,
       epss_scored: f.epss !== null, cvss_scored: f.cvss !== null,
     };
   }
@@ -272,6 +307,7 @@
     if (states.RANSOMWARE === 'unknown') r.RANSOMWARE = [cve.is_kev ? 'kev_unknown' : 'not_in_kev'];
     if (states.PATCH_AVAILABLE === 'unknown') r.PATCH_AVAILABLE = ['no_osv_record'];
     if (states.EOL_AFFECTED === 'unknown') r.EOL_AFFECTED = lcf.reasons.slice();
+    if (states.PUBLIC_DETECTION === 'unknown') r.PUBLIC_DETECTION = ['rules_unlisted'];
     return r;
   }
 
@@ -494,9 +530,11 @@
       }
     }
     if (!rows.length) {
-      rows.push(row('공개 룰 색인', cve.has_official_rules ? 'hit' : 'miss',
-                    cve.has_official_rules ? '공식 룰 있음' : '색인된 공개 룰 없음',
-                    { kind: 'detect', basis: 'CVE ID', detail: 'Sigma · ET/Snort · Suricata · Splunk · YARA · nuclei에서 찾음' }));
+      rows.push(cve.has_official_rules
+        ? row('공개 룰 색인', 'unknown', '어떤 룰인지 기록 없음', { kind: 'detect', basis: 'CVE ID',
+            detail: '공개 룰이 있다고만 기록돼 있고 엔진과 룰 내용이 남아 있지 않습니다. nuclei 점검 템플릿일 수도 있어 탐지 룰로 세지 않습니다' })
+        : row('공개 룰 색인', 'miss', '색인된 공개 룰 없음',
+              { kind: 'detect', basis: 'CVE ID', detail: 'Sigma · ET/Snort · Suricata · Splunk · YARA · nuclei에서 찾음' }));
     }
     return rows;
   }
@@ -853,10 +891,11 @@
   }
 
   return {
-    EPSS_P_HIGH, EPSS_SCORE_HIGH, CVSS_CRITICAL, URL, ENGINES, ENGINE_ORDER, engineInfo, RULE_LICENSE, ruleSource, ruleTerms,
+    EPSS_P_HIGH, EPSS_SCORE_HIGH, CVSS_CRITICAL, URL, ENGINES, ENGINE_ORDER, RULE_FAMILIES, engineInfo, RULE_LICENSE, ruleSource, ruleTerms,
     ET_FILES, ruleSid, ruleLink,
     SIGNALS, SIGNAL, SIGNAL_BY_KEY, CORRELATIONS, CORRELATION, REASON, SID, ENGINE_SID,
-    scoreFacts, epssHigh, patchState, hasFix, fixedVersions, detectionEngines, lifecycleFacts,
+    scoreFacts, epssHigh, patchState, hasFix, fixedVersions, detectionEngines, ruleEngines, ruleFamilies, hasCheckTemplate,
+    lifecycleFacts,
     signals, correlationsOf, reasonsOf, derive,
     SOURCE_FLAGS, sourceFlags, CONFLICTS, CONFLICT, conflictsOf, conflictQuery, sevBand,
     stateQuery, correlationQuery, parseRelease,

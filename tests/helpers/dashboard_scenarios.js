@@ -4,12 +4,14 @@
 // tests/dashboard.test.js 가 같은 목록을 지금 코드로 돌려 비교한다.
 const { filterIds, RESET } = require('./dashboard_vm');
 
+// 2026-11 필터 정리에서 지운 것(INVARIANTS §6) — 예전 has: 값(msf · rules · patched)과 예전 KPI 신호 버튼(activeFilters.signals).
+// 기준 파일에는 남아 있고, dashboard.test.js 의 semantic() 이 비교에서 빼고 같은 뜻의 새 검색어로 따로 대조한다.
 const SEARCHES = [
   '', 'cvss:>=9', 'cvss:<5', 'cvss:=9.8', 'epss:>=10', 'epss:<1', 'tier:t0', 'tier:t2',
   'vendor:microsoft', 'vendor:f5', 'product:nginx', 'product:windows server', 'cwe:79', 'cwe:cwe-787',
-  'has:kev', 'has:msf', 'has:nuclei', 'has:edb', 'has:poc', 'has:rules', 'has:ai', 'has:auto',
-  'has:ransom', 'has:patched', 'has:foo', 'windows', 'CVE-2026-0003', 'nginx 1.25', 'unknownword',
-  'cvss:>=9 has:kev vendor:microsoft', 'has:kev has:rules', 'epss:>=10 tier:t1', 'CVSS:>=7 Vendor:Oracle',
+  'has:kev', 'has:nuclei', 'has:edb', 'has:poc', 'has:ai', 'has:auto',
+  'has:ransom', 'has:foo', 'windows', 'CVE-2026-0003', 'nginx 1.25', 'unknownword',
+  'cvss:>=9 has:kev vendor:microsoft', 'epss:>=10 tier:t1', 'CVSS:>=7 Vendor:Oracle',
 ];
 
 const FILTERS = {
@@ -19,17 +21,12 @@ const FILTERS = {
   productPhp: "activeFilters.product = 'php';",
   severityCritical: "activeFilters.severity = new Set(['Critical']);",
   severityNoLow: "activeFilters.severity = new Set(['Critical', 'High', 'Medium', 'None']);",
-  signalKev: "activeFilters.signals.add('kev');",
-  signalWeaponPoc: "activeFilters.signals.add('weaponized'); activeFilters.signals.add('poc');",
-  signalRules: "activeFilters.signals.add('rules');",
-  signalAuto: "activeFilters.signals.add('auto');",
-  signalAi: "activeFilters.signals.add('ai');",
-  signalPatched: "activeFilters.signals.add('patched');",
   kernelHide: "activeFilters.kernel = 'hide';",
   kernelOnly: "activeFilters.kernel = 'only';",
   month08: "activeFilters.month = '2026-08';",
   day0921: "activeFilters.day = '2026-09-21';",
-  combo: "activeFilters.cvssMin = 7; activeFilters.signals.add('kev'); activeFilters.search = 'windows';",
+  // 예전에는 신호 버튼(kev)으로 걸었다 — 같은 뜻의 검색어 has:kev 로 걸어도 결과가 같아야 한다.
+  combo: "activeFilters.cvssMin = 7; activeFilters.search = 'windows has:kev';",
 };
 
 const SORTS = [
@@ -68,11 +65,9 @@ function collect(dash) {
   out.ui.pageInfo = dash.el('page-info').textContent;
   filterIds(dash, "activeFilters.search = 'nomatchatall';");
   out.ui.emptyRows = dash.el('cve-table-body').innerHTML;
-  filterIds(dash, "activeFilters.cvssMin = 7; activeFilters.signals.add('kev'); activeFilters.search = 'windows'; activeFilters.vendor = 'microsoft';");
+  filterIds(dash, "activeFilters.cvssMin = 7; activeFilters.search = 'windows has:kev'; activeFilters.vendor = 'microsoft';");
   out.ui.chips = dash.el('active-chips').innerHTML;
   out.ui.filterCount = dash.el('filter-count').textContent;
-  dash.run("clearFilter('signal', 'kev')");
-  out.ui.afterClearSignal = dash.run('filteredCves.map(c => c.id)');
   dash.run("clearFilter('search', '')");
   out.ui.afterClearSearch = dash.run('filteredCves.map(c => c.id)');
 
@@ -101,7 +96,6 @@ function collect(dash) {
   out.stats.severity = dash.el('severity-dist').innerHTML;
   out.stats.products = dash.el('product-dist').innerHTML;
   out.stats.topProducts = JSON.parse(JSON.stringify(dash.run('computeTopProducts()')));
-  out.stats.kpi = dash.run("KPI_TILES.map(sig => allCves.filter(c => cveHasSignal(c, sig)).length)");
   dash.run('buildVendorFilter(); buildProductFilter(); buildMonthFilter(); buildDayFilter();');
   for (const id of ['vendor-filter', 'product-filter', 'month-filter']) {
     out.stats[id] = dash.el(id).options.map(o => [o.value, o.textContent]);

@@ -343,8 +343,7 @@ class SlackNotifier:
 
             rule_count = 0
 
-            for key, label in (("sigma", "Sigma"), ("yara", "YARA"),
-                               ("splunk", "Splunk ESCU"), ("nuclei", "nuclei")):
+            for key, label in (("sigma", "Sigma"), ("yara", "YARA"), ("splunk", "Splunk ESCU")):
                 rule = rules_info.get(key)
                 if not rule:
                     continue
@@ -360,6 +359,11 @@ class SlackNotifier:
                     "type": "mrkdwn",
                     "text": _rule_block(str(net_rule.get('engine') or '').upper(),
                                         net_rule)}})
+
+            # nuclei 는 대상에 요청을 보내 확인하는 점검 템플릿이라 탐지 룰로 세지 않는다 — 함께 찾았으면 이름을 달리해 덧붙인다.
+            if rules_info.get('nuclei'):
+                blocks.append({"type": "section", "text": {
+                    "type": "mrkdwn", "text": _rule_block("nuclei 점검 템플릿 (탐지 룰 아님)", rules_info['nuclei'])}})
 
             blocks.append({"type": "divider"})
             blocks.append({

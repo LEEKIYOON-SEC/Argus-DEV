@@ -93,8 +93,6 @@
 
   /* ---------- 목록 한 행 ---------- */
 
-  const ENGINE_FAMILY = { snort2: 'Snort', snort3: 'Snort', suricata5: 'Suricata', suricata7: 'Suricata',
-                          sigma: 'Sigma', splunk: 'Splunk', yara: 'YARA', nuclei: 'nuclei' };
   const clean = v => { const s = String(v || '').trim(); return ['', 'unknown', 'n/a', '-'].includes(s.toLowerCase()) ? '' : s; };
   const EXPLOIT_SHORT = { 'CISA KEV': 'KEV', 'VulnCheck KEV': 'VulnCheck', 'SSVC active': 'SSVC' };
 
@@ -153,7 +151,17 @@
                         top === 'UNKNOWN' && e.lc.unresolved.length ? ' (제품은 찾았지만 릴리스를 정하지 못함)' : ''}. CVE가 아니라 제품 버전의 상태입니다` };
       }
     }
-    const engines = CTX ? CTX.detectionEngines(cve) : (cve.rule_engines || []);
+    // 탐지 · 수정 칸 — 탐지 룰은 엔진 계열 이름(context.js RULE_FAMILIES 순서, 계열을 모르는 엔진은 이름 그대로 뒤에),
+    // nuclei 점검 템플릿은 탐지 룰이 아니라 따로(check). 판단 모듈이 없으면 미확인.
+    let detection = { state: 'unknown', families: [], engines: [], check: false, why: 'module' };
+    if (CTX) {
+      const rules = CTX.ruleEngines(cve);
+      const families = CTX.RULE_FAMILIES.filter(f => f.engines.some(x => rules.includes(x))).map(f => f.label)
+        .concat(rules.filter(x => !CTX.RULE_FAMILIES.some(f => f.engines.includes(x))));
+      const state = s.PUBLIC_DETECTION || 'unknown';
+      detection = { state, families: [...new Set(families)], engines: rules, check: CTX.hasCheckTemplate(cve),
+                    why: state !== 'unknown' ? '' : s.PUBLIC_DETECTION ? 'rules_unlisted' : 'module' };
+    }
     const name = product ? (vendor && !product.toLowerCase().startsWith(vendor.toLowerCase()) ? `${vendor} ${product}` : product) : (vendor || '');
     const names = [name, ...aff.flatMap(a => [`${clean(a.vendor)} ${clean(a.product)}`.trim(), clean(a.product)])];
     return {
@@ -168,9 +176,7 @@
       product: { name, more: aff.length > 1 ? aff.length - 1 : 0, versions: clean(shown.versions), short: shortVersions(shown.versions),
                  packages: e.packages || [] },
       lifecycle,
-      detection: s.PUBLIC_DETECTION === 'yes'
-        ? { state: 'yes', text: [...new Set(engines.map(x => ENGINE_FAMILY[x] || x))].join(' · ') || '공식 룰', engines }
-        : CTX ? { state: 'no', text: '없음', engines: [] } : { state: 'unknown', text: '미확인', engines: [] },
+      detection,
       fix: s.PATCH_AVAILABLE === 'yes' ? { state: 'yes', text: '있음' }
         : s.PATCH_AVAILABLE === 'no' ? { state: 'no', text: '기록 없음' } : { state: 'unknown', text: '미확인' },
       conflicts: (e.ctx && e.ctx.conflicts) || [],
@@ -310,6 +316,5 @@
     }));
   }
 
-  return { SEVERITIES, josa, epssPct, scores, shortVersions, listRow, kpis, correlations, matrix, overview, recent, sources,
-           ENGINE_FAMILY };
+  return { SEVERITIES, josa, epssPct, scores, shortVersions, listRow, kpis, correlations, matrix, overview, recent, sources };
 });

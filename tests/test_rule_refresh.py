@@ -36,9 +36,18 @@ class FakeStore:
         self.writes.append(dict(data))
 
 
-def row(cve, has_rules, checked=None, kev=False, cvss=0.0, epss=0.0):
+SIGMA_SNAP = {"sigma": {"engine": "sigma", "source": "SigmaHQ", "url": "https://github.com/SigmaHQ/sigma/blob/x/r.yml"},
+              "network": [], "yara": None, "nuclei": None, "splunk": None}
+NUCLEI_SNAP = {"sigma": None, "network": [], "yara": None, "splunk": None,
+               "nuclei": {"engine": "nuclei", "source": "nuclei-templates", "link_only": True,
+                          "url": "https://github.com/projectdiscovery/nuclei-templates/blob/main/x.yaml"}}
+
+
+def row(cve, has_rules, checked=None, kev=False, cvss=0.0, epss=0.0, snapshot="auto"):
+    """has_rules — 탐지 룰이 이미 있는 행(운영처럼 has_official_rules 와 탐지 룰이 든 스냅샷을 함께 둔다)."""
+    snap = (SIGMA_SNAP if has_rules else None) if snapshot == "auto" else snapshot
     return {"id": cve, "has_official_rules": has_rules, "last_rule_check_at": checked,
-            "rules_snapshot": None, "is_kev": kev, "cvss_score": cvss, "epss_score": epss}
+            "rules_snapshot": snap, "is_kev": kev, "cvss_score": cvss, "epss_score": epss}
 
 
 def lacking(*cves):
@@ -77,6 +86,59 @@ class DueTests(unittest.TestCase):
         rows = {"CVE-2026-0001": row("CVE-2026-0001", False)}
         self.assertEqual(rr.due(rows, "", lambda *_: True), ([], []), "옛 색인(generated_at 없음)")
         self.assertEqual(rr.due(rows, "언젠가", lambda *_: True), ([], []))
+
+    def test_split_by_detection_rules_in_the_snapshot_not_by_the_flag(self):
+        rows = {"CVE-2026-0001": row("CVE-2026-0001", True, snapshot=NUCLEI_SNAP),
+                "CVE-2026-0002": row("CVE-2026-0002", True),
+                "CVE-2026-0003": row("CVE-2026-0003", True, snapshot=None),
+                "CVE-2026-0004": row("CVE-2026-0004", True, snapshot={**NUCLEI_SNAP, "network": [{"engine": "snort3"}]})}
+        fresh, known = rr.due(rows, BUILT, lambda *_: True)
+        self.assertEqual(ids(fresh), ["CVE-2026-0001", "CVE-2026-0003"],
+                         "nuclei 만 있던 행(has_official_rules 는 nuclei 로 켜졌다)과 어떤 룰인지 없는 행은 탐지 룰이 없던 것 — "
+                         "나중에 탐지 룰이 생기면 알린다")
+        self.assertEqual(ids(known), ["CVE-2026-0002", "CVE-2026-0004"], "탐지 룰이 이미 있으면 알림 없이 스냅샷만")
+
+
+class FoundKindTests(unittest.TestCase):
+    """탐지 룰(Sigma · Snort · Suricata · Splunk · YARA)과 nuclei 점검 템플릿을 가른다 — 화면 PUBLIC_DETECTION 과 같은 기준"""
+
+    def test_detection_rules(self):
+        for snap in ({"sigma": {"x": 1}}, {"yara": {"x": 1}}, {"splunk": {"x": 1}}, {"network": [{"engine": "suricata7"}]},
+                     {**NUCLEI_SNAP, "network": [{"engine": "snort2"}]}):
+            self.assertTrue(rr.has_detection(snap), snap)
+            self.assertEqual(rr.found_kind(snap), "detection", snap)
+
+    def test_nuclei_only_is_a_check_template(self):
+        self.assertFalse(rr.has_detection(NUCLEI_SNAP))
+        self.assertEqual(rr.found_kind(NUCLEI_SNAP), "check")
+
+    def test_nothing(self):
+        empty = {"sigma": None, "network": [], "yara": None, "nuclei": None, "splunk": None}
+        for snap in (empty, {}, None, "not a dict"):
+            self.assertFalse(rr.has_detection(snap))
+            self.assertIsNone(rr.found_kind(snap))
+
+    def test_keys(self):
+        self.assertEqual(set(rr.DETECTION_KEYS) | set(rr.CHECK_KEYS), set(rr.RULE_KEYS), "색인이 주는 룰 종류를 빠짐없이 가른다")
+        self.assertFalse(set(rr.DETECTION_KEYS) & set(rr.CHECK_KEYS))
+
+
+class WeeklyReportRuleCountTests(unittest.TestCase):
+    """주간 리포트 '공개 탐지 룰 확보' — nuclei 점검 템플릿만 있는 CVE 는 세지 않는다"""
+
+    def test_counts_detection_engines_only(self):
+        import datetime
+        import weekly_report as wr
+        start, end = datetime.date(2026, 11, 16), datetime.date(2026, 11, 22)
+        base = {"date": "2026-11-18T10:00:00+09:00", "published": "2026-11-17", "cvss": 7.5, "affected": []}
+        week = [dict(base, id="CVE-2026-0001", rule_engines=["nuclei"], has_official_rules=True),
+                dict(base, id="CVE-2026-0002", rule_engines=["snort2", "nuclei"], has_official_rules=True),
+                dict(base, id="CVE-2026-0003", rule_engines=["sigma"], has_official_rules=True),
+                dict(base, id="CVE-2026-0004", rule_engines=[], has_official_rules=True),
+                dict(base, id="CVE-2026-0005", rule_engines=[])]
+        with mock.patch.object(wr.pages, "base_url", return_value=None):
+            body = wr.build_weekly_body(week, "2026-W47", start, end)
+        self.assertIn("| 🛡️ 공개 탐지 룰 확보 | 2 |", body, "Snort · Sigma 만 — nuclei 만(0001) · 엔진 없는 공식 룰 표시(0004)는 아님")
 
 
 class PlanTests(unittest.TestCase):
@@ -211,7 +273,7 @@ class CutTests(unittest.TestCase):
 
 
 class RefreshKnownTests(unittest.TestCase):
-    """이미 룰이 있던 CVE — 알림 없이 스냅샷만, 못 찾은 것으로 지우지 않는다"""
+    """이미 탐지 룰이 있던 CVE — 알림 없이 스냅샷만, 못 찾은 것으로 지우지 않는다"""
 
     def run_refresh(self, results, rows=None, **kw):
         db = FakeStore({})
