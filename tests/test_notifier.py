@@ -34,13 +34,19 @@ class Sent:
 
 
 class ImmediateAlertTests(unittest.TestCase):
-    def send(self, data, status=200):
+    def send(self, data, status=200, tier=risk.T0):
         sent = Sent(status)
         with mock.patch.object(nt.requests, "post", sent), \
                 mock.patch.object(nt.package_index, "fixes_for", return_value={}), \
                 mock.patch.object(nt.time, "sleep"):
-            ok = nt.SlackNotifier()._send_immediate(data, "KEV 등재", risk.T0)
+            ok = nt.SlackNotifier()._send_immediate(data, "KEV 등재", tier)
         return ok, sent.payloads
+
+    def test_header_names_the_tier(self):
+        _, (t0,) = self.send(cve())
+        _, (t1,) = self.send(cve(is_kev=False, has_metasploit_module=True), tier=risk.T1)
+        self.assertEqual(t0["blocks"][0]["text"]["text"], "🚨 즉시 대응: CVE-2026-0001")
+        self.assertEqual(t1["blocks"][0]["text"]["text"], "⚠️ 악용 임박: CVE-2026-0001", "T1 은 등급 이름으로")
 
     def test_outside_text_is_escaped(self):
         ok, (payload,) = self.send(cve())
@@ -128,6 +134,17 @@ class SummaryTests(unittest.TestCase):
         with mock.patch.object(nt.requests, "post", sent):
             self.assertTrue(nt.SlackNotifier().send_batch_summary(tracked=0))
         self.assertEqual(sent.payloads, [])
+
+    def test_counts_use_the_tier_names(self):
+        sent = Sent()
+        n = nt.SlackNotifier()
+        n.collect_alert(cve(), "KEV 등재", risk.T0)
+        n.collect_alert(cve(id="CVE-2026-0002", is_kev=False), "Metasploit 모듈 공개", risk.T1)
+        with mock.patch.object(nt.requests, "post", sent):
+            self.assertTrue(n.send_batch_summary(tracked=0))
+        text = sent.payloads[0]["blocks"][1]["text"]["text"]
+        self.assertIn("• 🚨 *T0 관측된 악용:* 1건", text)
+        self.assertIn("• ⚠️ *T1 악용 임박:* 1건", text)
 
 
 if __name__ == "__main__":

@@ -153,8 +153,12 @@ test('목록 · 상세 스타일 — 새 칸(유형 칩 · 등급 구분 줄 · 
   assert.match(CSS, /\.dash-main > \.corr-panel \{ grid-column: span 2; \}/);
   assert.match(CSS, /\.kpi-strip \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\); gap: 16px;/);
   assert.match(CSS, /\.ov-table \.table-scroll \{ max-height: 400px;/);
-  // 나란히 보기 ID 칸은 넓은 목록과 같게(150px) — 'Medium 어제 23:59' 가 한 줄에 들어간다
-  assert.match(CSS, /\.content\.is-split \.cve-table \.h-id \{ width: 150px; \}/);
+  // ID 칸 — 심각도 배지와 공개일(YYYY-MM-DD)이 한 줄에 들어가는 폭. 나란히 보기도 넓은 목록과 같게
+  assert.match(CSS, /\n\.cve-table \.h-id \{ width: 176px; \}/);
+  assert.match(CSS, /\.content\.is-split \.cve-table \.h-id \{ width: 176px; \}/);
+  // '공개' 글자는 표에서는 숨기고(머리글이 알려 준다) 머리글이 없는 카드(1000px 이하)에서만 보인다
+  assert.match(CSS, /\n\.c-date-k \{ display: none; \}/);
+  assert.match(block(CSS, '@media (max-width: 1000px)'), /\.c-date-k \{ display: inline; \}/);
   // ID 칸 둘째 줄은 넘치면 다음 줄로('AI 발견' 태그가 칸 밖으로 잘리지 않게)
   assert.match(CSS, /\.c-meta \{ display: flex; flex-wrap: wrap;/);
 });

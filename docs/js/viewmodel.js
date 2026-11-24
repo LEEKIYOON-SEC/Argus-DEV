@@ -180,7 +180,7 @@
       fix: s.PATCH_AVAILABLE === 'yes' ? { state: 'yes', text: '있음' }
         : s.PATCH_AVAILABLE === 'no' ? { state: 'no', text: '기록 없음' } : { state: 'unknown', text: '미확인' },
       conflicts: (e.ctx && e.ctx.conflicts) || [],
-      date: cve.date || '',
+      published: cve.published || '',
     };
   }
 

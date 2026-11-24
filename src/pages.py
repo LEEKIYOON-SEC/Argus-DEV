@@ -50,7 +50,9 @@ def fetch_published_json(filename: str, timeout: int = _TIMEOUT):
 
 
 def write_json(path: str, payload) -> None:
+    # 화면이 받는 파일(cves.json · cve-products.json · stats.json)이라 들여쓰기 없이 쓴다 — 실측 2026-11-24 cves.json
+    # 63.9MB 중 줄바꿈 · 들여쓰기가 차지하던 몫을 받지 않는다. 사람이 읽을 파일(저장소의 수명주기 데이터)은 따로 쓴다.
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(tmp, path)

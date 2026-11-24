@@ -51,6 +51,14 @@ def _tier_of(state: dict, entry: dict, verdict=None) -> str:
     stored = _s(state, "tier")
     if stored not in (risk.T0, risk.T1, risk.T2, risk.T3):
         return derived
+    if stored in risk.ALERTING_TIERS:
+        # 저장 등급은 그 행을 마지막으로 처리할 때의 규칙으로 정했다. 규칙이 트리거를 한 등급 내리면(2026-11 Metasploit
+        # T0 → T1) 다시 처리되지 않은 행에 옛 등급이 남는다 — 알림을 보낸 트리거를 지금 규칙으로 읽은 등급보다 높게 부르지
+        # 않는다. 알림 트리거만 보므로 알림 등급 안에서만 움직이고(보존 대상은 그대로), 저장 등급보다 높이지도 않는다.
+        fired = [risk.TRIGGERS[k].tier for k in _l(state, "fired_triggers")
+                 if isinstance(k, str) and k in risk.ALERTING_TRIGGERS]
+        if fired:
+            stored = max(stored, min(fired, key=risk.tier_rank), key=risk.tier_rank)
     return min(stored, derived, key=risk.tier_rank)
 
 

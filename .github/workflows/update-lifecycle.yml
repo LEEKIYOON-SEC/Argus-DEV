@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      artifact: ${{ steps.carry.outcome }}
+      artifact: ${{ steps.upload.outcome }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -72,8 +72,15 @@ jobs:
         continue-on-error: true
         run: node src/build_context.js
 
-      - name: Upload Pages artifact
+      # 화면 · 파이프라인 코드의 문법을 확인한다. 깨진 파일이 있으면 산출물을 올리지 않아 배포를 건너뛴다(직전 사이트가 그대로 남는다).
+      - name: Check code syntax
+        id: syntax
         if: steps.carry.outcome == 'success'
+        run: python src/check_syntax.py
+
+      - name: Upload Pages artifact
+        id: upload
+        if: steps.syntax.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs
