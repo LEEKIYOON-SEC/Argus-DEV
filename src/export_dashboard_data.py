@@ -72,7 +72,7 @@ def _triggers_of(state: dict, verdict) -> list:
     return sorted(verdict.triggers, key=lambda k: _TRIGGER_ORDER.get(k, 99))
 
 
-_EXPORT_SCHEMA = 4
+_EXPORT_SCHEMA = 5   # 5: date 를 알림 · CVE 레코드 갱신 기준으로, alerted · record_updated 추가 (2026-11)
 _MAX_REFERENCES = 8
 _ANALYSIS_KEYS = ("root_cause", "scenario", "impact")
 
@@ -201,6 +201,34 @@ def _s(state: dict, key: str, default: str = "") -> str:
     return v if isinstance(v, str) else default
 
 
+_KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def _when(value) -> Optional[dt.datetime]:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)
+
+
+def event_time(alerted, record_updated, published: str = "") -> str:
+    """화면의 Argus 시각(date) — 실제로 일어난 일 중 가장 늦은 것: 알림을 보낸 시각과 CVE 레코드 갱신 시각.
+
+    둘 다 없으면(갱신 시각을 받기 전에 저장된 행) 공개일. 행을 다시 저장한 시각(updated_at)은 넣지 않는다 — 룰 재확인 같은
+    정비 작업이 저장 시각을 바꿔 옛 CVE 가 '최근 24시간'에 섞이고 목록 맨 위에 올라왔다(2026-11-24 실측: 24시간 1,572건 중
+    약 1,140건). 시간대는 KST 로 맞춘다 — 월 · 일 필터와 주간 리포트가 날짜를 앞 10글자로 자른다.
+    """
+    times = [d for d in (_when(alerted), _when(record_updated)) if d]
+    if not times and published:
+        times = [_when(f"{published}T00:00:00+00:00")]
+    best = max((d for d in times if d), default=None)
+    return best.astimezone(_KST).isoformat() if best else ""
+
+
 def _l(state: dict, key: str) -> list:
     v = state.get(key)
     return v if isinstance(v, list) else []
@@ -274,8 +302,11 @@ def export_cves(db, days: int = 90, since: str = None, facts: dict = None) -> li
             "is_kev": bool(row.get("is_kev")),
             "cwe": cwe_clean,
             "affected": [],
-            "date": row.get("last_alert_at") or row.get("updated_at") or "",
+            "date": event_time(row.get("last_alert_at"), _s(state, "record_updated"), _s(state, "published")[:10]),
+            # updated 는 Argus 가 행을 다시 저장한 시각 — 증분 병합 · 보존(90일) 기준으로만 쓴다(화면에 내지 않는다).
             "updated": row.get("updated_at") or "",
+            "alerted": row.get("last_alert_at") or "",
+            "record_updated": _s(state, "record_updated"),
         }
 
         seen_aff = {}

@@ -85,7 +85,7 @@
         <code>conflict:exploitation</code><span>출처 간 차이. exploitation(KEV와 SSVC) · exploit(공개 목록과 SSVC) · cvss(버전별 등급) · any</span>
         <code>lifecycle:eol</code><span>영향 버전의 지원 상태. eol · extended · security · active · unknown</span>
         <code>eol:&lt;90d</code><span>EOL까지 90일 미만 남은 버전 · <code>release:windows/10-22h2</code> 특정 릴리스</span>
-        <code>recent:24h</code><span>최근 24시간(또는 <code>7d</code>) 안에 알림을 보냈거나 상태가 바뀐 CVE</span>
+        <code>recent:24h</code><span>최근 24시간(또는 <code>7d</code>) 안에 알림을 보냈거나 CVE 레코드가 갱신된 CVE</span>
         <code>published:7d</code><span>최근 7일 안에 공개된 CVE</span>
         <code>kev:7d</code><span>최근 7일 안에 CISA KEV에 등재된 CVE · <code>due:3d</code> KEV의 미 연방기관 기한(미국 연방 민간기관의 조치 기한)이 3일 안에 돌아오는 CVE</span>
         <code>tier:t0</code><span>알림 등급. t0 관측된 악용 · t1 악용 임박 · t2 관찰 · t3 신호 없음</span>
@@ -180,7 +180,7 @@
           <select id="sort-select" aria-label="정렬 기준">
             <option value="id">CVE 번호순</option>
             <option value="published">공개일 최신순</option>
-            <option value="date">알림 시각 최신순</option>
+            <option value="record">갱신 최신순</option>
             <option value="tier">알림 등급 → KEV · 공개일</option>
             <option value="cvss">CVSS 높은 순</option>
             <option value="epss">EPSS 높은 순</option>
@@ -199,7 +199,7 @@
       </section>
       <div class="help-card" id="list-help" hidden>
         <ul>
-          <li>기본 정렬은 CVE 번호순(최신 번호 먼저)이고, CVE 번호 아래 날짜는 CVE 공개일입니다.</li>
+          <li>기본 정렬은 CVE 번호순(최신 번호 먼저)이고, CVE 번호 아래 날짜는 CVE 공개일입니다. '갱신 최신순'으로 정렬하면 그 자리에 CVE 레코드 갱신일이 나옵니다. 마우스를 올리면 둘 다 보입니다.</li>
           <li>정렬에서 알림 등급을 고르면 관측된 악용 → 악용 임박 → 관찰 → 신호 없음 순서로 놓고, 같은 등급 안은 CISA KEV 먼저, 그다음 공개일 최신 · EPSS 높은 순입니다. 등급이 바뀌는 곳에 구분 줄이 있습니다.</li>
           <li>제목 아래 줄은 취약점 유형 · 영향 제품 · 요약 앞부분입니다. 유형에 마우스를 올리면 한 줄 풀이가 보입니다.</li>
           <li>빈칸은 정보가 없거나 미확인인 경우입니다. 출처별 상태는 상세에서 볼 수 있습니다.</li>
@@ -255,8 +255,8 @@
             <div class="filter-row">
               <select class="filter-select" id="vendor-filter" title="벤더로 좁히기"><option value="">전체 벤더</option></select>
               <select class="filter-select" id="product-filter" title="제품으로 좁히기"><option value="">전체 제품</option></select>
-              <select class="filter-select" id="month-filter" title="알림 시각 기준 월"><option value="">전체 기간</option></select>
-              <select class="filter-select" id="day-filter" title="알림 시각 기준 날짜 (월을 고르면 그 달의 날짜만)"><option value="">전체 일자</option></select>
+              <select class="filter-select" id="month-filter" title="마지막 알림 · CVE 레코드 갱신 시각 기준 월"><option value="">전체 기간</option></select>
+              <select class="filter-select" id="day-filter" title="마지막 알림 · CVE 레코드 갱신 시각 기준 날짜 (월을 고르면 그 달의 날짜만)"><option value="">전체 일자</option></select>
               <select class="filter-select" id="kernel-filter" title="Linux 커널 CVE는 제품이 모두 Linux로만 적혀 있어 구분이 안 됩니다. 커널은 CVE마다가 아니라 패키지를 한 번 올려서 고치므로, 나머지를 훑어볼 때는 빼고 보는 편이 편합니다.">
                 <option value="">커널 포함</option>
                 <option value="hide">커널 제외</option>
@@ -274,7 +274,7 @@
           <table class="cve-table">
             <thead>
               <tr>
-                <th class="h-id"><button type="button" class="th-sort" data-sort="id">CVE</button><span class="th-sep">·</span><button type="button" class="th-sort" data-sort="published" title="CVE 공개일 순">공개</button></th>
+                <th class="h-id"><button type="button" class="th-sort" data-sort="id">CVE</button><span class="th-sep">·</span><button type="button" class="th-sort th-date" data-sort="published" title="CVE 공개일 순">공개</button></th>
                 <th class="h-sum">요약 · 영향 제품 <span class="th-note" title="제목과 요약은 AI가 번역·요약한 글입니다. 원문은 상세의 기술 정보에 있습니다">AI 번역</span></th>
                 <th class="h-score"><button type="button" class="th-sort" data-sort="cvss">CVSS</button><span class="th-sep">·</span><button type="button" class="th-sort" data-sort="epss">EPSS</button></th>
                 <th class="h-threat" title="악용 근거 · 공개 익스플로잇 · 자동화 가능. 출처에서 확인된 것만 표시합니다. 영향 버전의 지원 상태(endoflife.date)를 알면 함께 적습니다">위협 신호</th>

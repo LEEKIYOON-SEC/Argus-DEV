@@ -247,7 +247,7 @@ test('KPI — 6칸, 정의가 바뀐 칸(CISA KEV · 무기화 · 24시간)과 �
   assert.doesNotMatch(kpis, /—/, '칸 안의 설명에 줄표를 쓰지 않는다');
   // renderStats 가 쓰는 칸(예전 id)도 같은 값
   assert.deepEqual(['stat-total', 'stat-24h', 'stat-kev', 'stat-weapon', 'stat-poc', 'stat-ai'].map(id => d.el(id).textContent), ['16', '5', '2', '3', '2', '1']);
-  assert.equal(d.el('stat-24h-sub').textContent, '새 공개와 상태 변경 포함');
+  assert.equal(d.el('stat-24h-sub').textContent, '새 공개와 레코드 갱신 포함');
   // 예전 KPI 네 칸(악용 근거 · 예전 무기화 묶음 · PoC · AI 발견)의 숫자 — 남은 세 칸은 같은 뜻의 검색어로 그대로 센다.
   // 예전 무기화 묶음(MSF · EDB · nuclei, has:msf)은 2026-11 필터 정리에서 지웠다.
   const [kev, , poc, ai] = BASELINE.stats.kpi;
@@ -441,7 +441,7 @@ test('목록 — 5칸, 출처가 확인한 것만 칩, 없음 · 미확인은 �
   assert.doesNotMatch(row(cve(1)), />탐지 룰</, "엔진을 가리지 않는 '탐지 룰' 태그 하나는 없다");
   assert.match(row(cve(2)), /class="df df-chk" title="nuclei 점검 템플릿[^"]*">nuclei<\/span>/, 'nuclei 는 점검 템플릿 모양으로 따로');
   assert.doesNotMatch(row(cve(2)), /df-det/, 'nuclei 만 있으면 탐지 룰 태그는 없다');
-  assert.doesNotMatch(row(cve(9)), /df-det|df-chk|미확인/, '어떤 룰인지 모르는 행은 빈칸 (상세에서 미확인 사유)');
+  assert.doesNotMatch(row(cve(9)).split('class="c-def"')[1], /df-det|df-chk|미확인/, '어떤 룰인지 모르는 행은 빈칸 (상세에서 미확인 사유)');
   assert.match(row(cve(4)), /ev-chip ev-exploit[^>]*><i><\/i>VulnCheck<b>외 1<\/b><\/span>/, "출처가 여럿이면 '외 N'");
   assert.match(row(cve(14)), /<td class="c-threat"[^>]*><span class="ev-chips">[^]*lc-badge lc-ACTIVE[^>]*>ACTIVE<em>/,
                '지원 상태는 알 때만 위협 신호 칸의 칩으로 (+ 릴리스 이름)');
@@ -452,8 +452,8 @@ test('목록 — 5칸, 출처가 확인한 것만 칩, 없음 · 미확인은 �
   assert.match(row(cve(1)), /<span class="c-type"[^>]*>Out-of-bounds Write<\/span>/);
   assert.match(row(cve(6)), /Oracle Java SE<span class="c-ver"> · 8u112<\/span>/, '단일 버전');
   assert.doesNotMatch(row(cve(6)), /c-type/, 'CWE 가 없으면 유형 칩 없음');
-  assert.match(row(cve(1)), /class="c-date" title="CVE 공개일 2026-09-19 \(CVE 레코드 기준\)\. Argus 알림 시각은 상세의 기술 정보에 있습니다"><span class="c-date-k">공개 <\/span>2026-09-19<\/span>/,
-               "CVE 번호 아래 날짜는 알림 시각이 아니라 CVE 공개일 ('공개' 글자는 카드에서만 보인다)");
+  assert.match(row(cve(1)), /class="c-date" title="CVE 공개일 2026-09-19 · CVE 레코드 갱신 미확인 \(CVE 레코드 기준\)\. Argus가 알림을 보낸 CVE는 알림 시각이 상세의 기술 정보에 있습니다"><span class="c-date-k">공개 <\/span>2026-09-19<\/span>/,
+               "CVE 번호 아래 날짜는 알림 시각이 아니라 CVE 공개일 ('공개' 글자는 카드에서만 보인다, 갱신 시각을 모르면 미확인)");
   assert.doesNotMatch(html, /badge-kev|badge-msf/, '예전 위협 배지 스타일을 쓰지 않는다');
   filterIds(d, "activeFilters.search = 'nomatch';");
   assert.match(d.el('cve-table-body').innerHTML, /colspan="5" class="empty-state"/, '5칸');
@@ -515,6 +515,44 @@ test('알림 등급순 — 같은 등급 안은 CISA KEV 먼저, 그다음 공�
   // KEV 가 공개일보다 앞선다 — 오래된 KEV 가 새 VulnCheck 보다 위
   d.run("allCves.find(c => c.id === 'CVE-2026-0010').published = '2020-01-01'; applyFilters();");
   assert.deepEqual(d.run('filteredCves.slice(0, 3).map(c => c.id)'), [cve(1), cve(10), cve(4)]);
+});
+
+test('갱신 최신순 — CVE 레코드 갱신 시각 순, 첫 칸 날짜 · 머리글이 갱신으로 바뀌고 마우스 설명에는 둘 다', () => {
+  const d = dashboard();
+  d.run(`(() => { const set = (n, v) => { allCves.find(c => c.id === 'CVE-2026-' + String(n).padStart(4, '0')).record_updated = v; };
+    set(3, '2026-11-24T01:00:00Z'); set(9, '2026-11-23T23:59:59Z'); set(1, '2025-01-02T03:04:05Z'); })()`);
+  // 날짜 머리글 버튼 — 가짜 DOM 은 querySelector 가 늘 null 이라 이 테스트에서만 하나 끼운다
+  d.run(`__btn = { textContent: '공개', title: '', dataset: { sort: 'published' }, classList: { add() {}, remove() {} } };
+         document.querySelector = sel => (sel === '.cve-table .th-date' ? __btn : null);`);
+  d.run("setSort('record');");
+  assert.deepEqual(d.run('filteredCves.slice(0, 3).map(c => c.id)'), [cve(3), cve(9), cve(1)], '늦게 갱신된 순, 갱신 시각을 모르는 행은 그 뒤');
+  assert.deepEqual([...d.run('[__btn.textContent, __btn.dataset.sort, __btn.title]')], ['갱신', 'record', 'CVE 레코드 갱신일 순']);
+  const html = d.el('cve-table-body').innerHTML;
+  const row = id => html.split('<tr ').find(r => r.includes(`data-id="${id}"`));
+  assert.match(row(cve(3)), /title="CVE 공개일 2026-09-19 · CVE 레코드 갱신 2026-11-24 01:00 UTC \(CVE 레코드 기준\)[^"]*"><span class="c-date-k">갱신 <\/span>2026-11-24<\/span>/,
+               '첫 칸은 갱신일(UTC 날짜), 마우스 설명에는 공개일 · 갱신 시각 둘 다');
+  assert.match(row(cve(5)), /<span class="c-date-k">갱신 <\/span>-<\/span>/, '갱신 시각을 모르면 -');
+  d.run("sortBy('record');");
+  assert.equal(d.run('sortDir'), 1, '머리글을 다시 누르면 오래된 순');
+  // 다른 정렬로 가면 첫 칸과 머리글이 공개일로 돌아온다
+  d.run("setSort('cvss');");
+  assert.deepEqual([...d.run('[__btn.textContent, __btn.dataset.sort]')], ['공개', 'published']);
+  assert.match(d.el('cve-table-body').innerHTML.split('<tr ').find(r => r.includes(`data-id="${cve(3)}"`)),
+               /<span class="c-date-k">공개 <\/span>2026-09-19<\/span>/);
+});
+
+test('상세 시각 — CVE 공개 · CVE 레코드 갱신, Argus 알림 시각은 알림을 보낸 CVE 에만 (내부 저장 시각은 내지 않는다)', () => {
+  const d = dashboard();
+  d.run(`(() => { const c1 = allCves.find(c => c.id === 'CVE-2026-0001');
+    c1.record_updated = '2026-11-23T14:05:12Z'; c1.alerted = '2026-11-24T10:59:51+09:00'; c1.updated = '2026-11-24T12:00:00+09:00'; })()`);
+  d.run("showDetail('CVE-2026-0001')");
+  const body = unesc(d.el('modal-body').innerHTML);
+  assert.match(body, /레코드 시각<\/span><span class="detail-value">CVE 공개 2026-09-19 · CVE 레코드 갱신 2026-11-23 14:05 UTC · Argus 알림 2026-11-24 01:59 UTC<\/span>/);
+  assert.match(body, /<span>CVE 레코드 갱신 <b>2026-11-23 14:05 UTC<\/b><\/span>/, '데이터 기준 시각도 CVE 레코드 갱신');
+  assert.doesNotMatch(body, /Argus 레코드 갱신|2026-11-24 03:00 UTC/, 'Argus 가 행을 다시 저장한 시각(updated)은 내지 않는다');
+  d.run("showDetail('CVE-2026-0003')");
+  const plain = unesc(d.el('modal-body').innerHTML);
+  assert.match(plain, /CVE 공개 2026-09-19 · CVE 레코드 갱신 미확인<\/span>/, '알림을 보낸 적 없으면 알림 시각을 적지 않는다 · 갱신 시각을 모르면 미확인');
 });
 
 test('영향 버전 한 줄 표기 — 수집 단계 형식을 줄이고, 하한이 없으면 상한만', () => {
