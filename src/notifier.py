@@ -178,7 +178,7 @@ class SlackNotifier:
         try:
             cve_id = cve_data['id']
             title = cve_data.get('title_ko') or cve_data.get('title') or 'N/A'
-            head = "🚨 즉시 대응" if tier == risk.T0 else "⚠️ 높음"
+            head = "🚨 즉시 대응" if tier == risk.T0 else "⚠️ 악용 임박"
 
             lines = [f"*{esc(clip(title, 300))}*", ""]
             lines.append(f"*무엇이 바뀌었나* · {esc(reason)}")
@@ -275,7 +275,7 @@ class SlackNotifier:
             if t0:
                 lines.append(f"• 🚨 *T0 관측된 악용:* {len(t0)}건")
             if t1:
-                lines.append(f"• ⚠️ *T1 무기화 임박:* {len(t1)}건")
+                lines.append(f"• ⚠️ *T1 악용 임박:* {len(t1)}건")
             if tracked:
                 lines.append(f"• 📋 *T2 관찰 등록:* {tracked}건 — 대시보드에서 확인")
 

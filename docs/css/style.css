@@ -613,7 +613,8 @@ tbody td { padding: 10px 12px; font-size: 14px; vertical-align: middle; }
 .th-note { margin-left: 4px; padding: 0 5px; border: 1px dashed var(--border-strong); border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--text-muted); cursor: help; }
 
 table.cve-table { min-width: 900px; table-layout: fixed; }
-.cve-table .h-id { width: 150px; }
+/* ID 칸 — 둘째 줄의 심각도 배지와 공개일(YYYY-MM-DD)이 한 줄에 들어가는 폭(가장 넓은 'Medium' 기준 실측 172px + 여유) */
+.cve-table .h-id { width: 176px; }
 .cve-table .h-score { width: 88px; text-align: right; }
 .cve-table .h-threat { width: 190px; }
 /* 탐지 · 수정 — 엔진 이름 태그가 한 줄에 둘씩 들어가는 폭(Snort · Suricata 가 흔한 조합) */
@@ -634,6 +635,8 @@ table.cve-table { min-width: 900px; table-layout: fixed; }
 .c-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; margin-top: 2px; }
 .c-meta .badge-sev { padding: 0 6px; }
 .c-date { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+/* '공개' 글자 — 표에서는 머리글이 알려 주므로 숨기고, 머리글이 없는 카드(1000px 이하)에서만 보인다 */
+.c-date-k { display: none; }
 /* 최근에 본 CVE — 읽은 메일처럼 굵기를 빼고 흐리게 */
 .cve-id.is-seen { font-weight: 400; color: var(--text-muted); }
 .c-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1152,8 +1155,8 @@ details.terms-item[open] .if-closed, details.terms-item:not([open]) .if-open { d
   .content.is-split .modal-hero { border-radius: 0; }
   .content.is-split .cve-table .h-def, .content.is-split .cve-table .c-def { display: none; }
   .content.is-split table.cve-table { min-width: 0; }
-  /* ID 칸은 넓은 목록과 같게 — 'Medium 어제 23:59' 가 한 줄에 들어간다 */
-  .content.is-split .cve-table .h-id { width: 150px; }
+  /* ID 칸은 넓은 목록과 같게 — 심각도 배지와 공개일이 한 줄에 들어간다 */
+  .content.is-split .cve-table .h-id { width: 176px; }
   .content.is-split .cve-table .h-threat { width: 160px; }
   /* 칩 두 개가 한 줄에 들어가게 여백만 줄임 */
   .content.is-split .cve-table .ev-chip { gap: 4px; padding: 0 6px 0 5px; }
@@ -1194,6 +1197,7 @@ details.terms-item[open] .if-closed, details.terms-item:not([open]) .if-open { d
   .cve-table td.c-id { grid-area: id; position: static; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0; }
   .cve-table td.c-id::before { top: 10px; bottom: 10px; }
   .c-meta { margin-top: 0; }
+  .c-date-k { display: inline; }
   .cve-table td.c-sum { grid-area: sum; }
   .cve-table td.c-score { grid-area: score; display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; }
   .sc-sub { display: inline; }

@@ -48,6 +48,10 @@ const REMOVED = {
 };
 // 영향 제품 순위의 툴팁 문구만 바꿨다(말투 정리). 칸 구성 · 숫자 · 누르면 거는 필터는 그대로 비교한다.
 // 제품 이름은 이제 onclick 코드가 아니라 data-product 에 싣는다(이름의 따옴표 · 역슬래시가 코드로 읽히지 않게). 걸리는 필터는 같다.
+// 의도한 변경(2026-11) — 알림 등급순에서 같은 등급 안의 순서를 알림 시각 최신순 → CISA KEV · 공개일 · EPSS 순으로 바꿨다.
+// 변경 전 기준과 대조할 때만 그 한 단계(withinTier)를 꺼서 예전처럼 알림 시각 최신순으로 두고 나머지 동작을 그대로 비교한다.
+// 새 순서는 '알림 등급순 — 같은 등급 안은 …' 테스트가 확인한다.
+const legacyOrder = d => { d.run('withinTier = () => 0;'); return d; };
 const noTitles = html => String(html).replace(/ title="[^"]*"/g, '')
   .replace(/data-product="([^"]*)" onclick="filterByProduct\(this\.dataset\.product\)"/g, "onclick=\"filterByProduct('$1')\"");
 function semantic(out) {
@@ -63,7 +67,7 @@ function semantic(out) {
 }
 
 test('회귀: 검색·필터·정렬·페이지·통계·필터 목록·CSV/JSON/STIX 가 변경 전과 같다', () => {
-  const now = semantic(collect(dashboard()));
+  const now = semantic(collect(legacyOrder(dashboard())));
   const base = semantic(BASELINE);
   for (const section of Object.keys(base)) {
     for (const key of Object.keys(base[section])) {
@@ -73,11 +77,11 @@ test('회귀: 검색·필터·정렬·페이지·통계·필터 목록·CSV/JSON
 });
 
 test('회귀: 수명주기 데이터를 못 받아도 기존 동작이 같다', () => {
-  assert.deepEqual(semantic(collect(dashboard({ lifecycle: false }))), semantic(BASELINE));
+  assert.deepEqual(semantic(collect(legacyOrder(dashboard({ lifecycle: false })))), semantic(BASELINE));
 });
 
 test('회귀: 수명주기·파생 모듈이 없어도 목록·검색·내보내기가 동작한다', () => {
-  assert.deepEqual(semantic(collect(dashboard({ files: CORE, lifecycle: false }))), semantic(BASELINE));
+  assert.deepEqual(semantic(collect(legacyOrder(dashboard({ files: CORE, lifecycle: false })))), semantic(BASELINE));
 });
 
 test('기존 has:* 는 뜻 그대로, 전부 통과하던 has:nuclei · edb · ransom · 잘못된 값은 고쳤다', () => {
@@ -132,7 +136,7 @@ test('새 검색어 — 출처별 · 파생 신호 · 없음(no:) · 모름(unkn
 });
 
 test('필터 정리 — 지운 예전 값은 안내하고, 같은 뜻의 새 검색어는 변경 전 결과와 같다', () => {
-  const d = dashboard();
+  const d = legacyOrder(dashboard());
   // 예전 신호 버튼 → 같은 뜻의 검색어 (변경 전 기준 파일과 대조)
   for (const [name, q] of [['signalKev', 'has:kev'], ['signalAuto', 'has:auto'], ['signalAi', 'has:ai'], ['signalPatched', 'has:patch']]) {
     assert.deepEqual(filterIds(d, `activeFilters.search = ${JSON.stringify(q)};`), BASELINE.filters[name], `${name} = ${q}`);
@@ -448,8 +452,8 @@ test('목록 — 5칸, 출처가 확인한 것만 칩, 없음 · 미확인은 �
   assert.match(row(cve(1)), /<span class="c-type"[^>]*>Out-of-bounds Write<\/span>/);
   assert.match(row(cve(6)), /Oracle Java SE<span class="c-ver"> · 8u112<\/span>/, '단일 버전');
   assert.doesNotMatch(row(cve(6)), /c-type/, 'CWE 가 없으면 유형 칩 없음');
-  assert.match(row(cve(1)), /class="c-date" title="알림 시각 toLocaleString\(&quot;ko-KR&quot;,null\)@2026-09-20T03:00:00\.000Z \(알림을 보냈거나 상태가 바뀐 때\. CVE 공개일이 아님\)">/,
-               '칸에는 짧게, 마우스를 올리면 전체 시각');
+  assert.match(row(cve(1)), /class="c-date" title="CVE 공개일 2026-09-19 \(CVE 레코드 기준\)\. Argus 알림 시각은 상세의 기술 정보에 있습니다"><span class="c-date-k">공개 <\/span>2026-09-19<\/span>/,
+               "CVE 번호 아래 날짜는 알림 시각이 아니라 CVE 공개일 ('공개' 글자는 카드에서만 보인다)");
   assert.doesNotMatch(html, /badge-kev|badge-msf/, '예전 위협 배지 스타일을 쓰지 않는다');
   filterIds(d, "activeFilters.search = 'nomatch';");
   assert.match(d.el('cve-table-body').innerHTML, /colspan="5" class="empty-state"/, '5칸');
@@ -460,8 +464,12 @@ test('목록 — 알림 등급 정렬이면 등급이 바뀌는 곳과 쪽 맨 �
   filterIds(d, '');
   const html = d.el('cve-table-body').innerHTML;
   const groups = [...html.matchAll(/<tr class="grp-row grp-(T\d)"><td colspan="5">[^]*?<b>([^<]+)<\/b><span class="grp-n">(\d+)건<\/span><span class="grp-desc">([^<]+)<\/span><\/td><\/tr>/g)]
-    .map(m => [m[1], m[2], Number(m[3]), m[4].endsWith(' · 알림 시각 최신순')]);
-  assert.deepEqual(groups, [['T0', '관측된 악용', 3, true], ['T1', '무기화 임박', 5, true], ['T2', '관찰', 6, true], ['T3', '신호 없음', 2, true]]);
+    .map(m => [m[1], m[2], Number(m[3]), m[4].endsWith(' · CISA KEV 먼저, 그다음 공개일 최신 · EPSS 높은 순')]);
+  assert.deepEqual(groups, [['T0', '관측된 악용', 3, true], ['T1', '악용 임박', 5, true], ['T2', '관찰', 6, true], ['T3', '신호 없음', 2, true]]);
+  const descOf = tier => (html.match(new RegExp(`grp-${tier}"><td[^>]*>[^]*?<span class="grp-desc">([^<]*)<`)) || [])[1];
+  assert.equal(descOf('T0'), 'CISA KEV · VulnCheck KEV · SSVC active에서 악용이 보고된 CVE (바로 알림) · CISA KEV 먼저, 그다음 공개일 최신 · EPSS 높은 순',
+               'Metasploit 은 T0 설명에 없다 (T1 으로 옮김)');
+  assert.match(descOf('T1'), /^악용 보고는 아직 없지만 Metasploit · Exploit-DB · nuclei 템플릿 · AI 발견으로 공격 방법이 공개됐거나 EPSS 상위 1%인 CVE \(바로 알림\)/);
   // 구분 줄 바로 다음 행이 그 등급의 첫 행
   for (const [tier] of groups) {
     const after = html.slice(html.indexOf(`grp-${tier}`));
@@ -476,15 +484,37 @@ test('목록 — 알림 등급 정렬이면 등급이 바뀌는 곳과 쪽 맨 �
   assert.equal(d.run('listColumns()'), 5, '표를 그리기 전(칸 너비를 모름)에는 전체 칸 수');
 });
 
-test('목록 — 알림 시각은 오늘 · 어제면 시각까지, 그 전은 날짜만 (보는 사람의 시간대)', () => {
+test('목록 — 기본 정렬은 CVE 번호순(최신 번호 먼저), 머리글 · 정렬 메뉴의 공개일순', () => {
   const d = dashboard();
-  const at = (iso, now) => d.run(`alertTimeText(${JSON.stringify(iso)}, new Date(${JSON.stringify(now)}))`);
-  assert.equal(at('2026-09-28T09:55:00Z', '2026-09-28T23:10:00Z'), '오늘 09:55');
-  assert.equal(at('2026-09-27T23:59:00Z', '2026-09-28T00:10:00Z'), '어제 23:59');
-  assert.equal(at('2026-09-26T09:55:00Z', '2026-09-28T00:10:00Z'), '9. 26.');
-  assert.equal(at('2025-12-31T09:55:00Z', '2026-01-02T00:10:00Z'), '25. 12. 31.', '다른 해는 두 자리 연도');
-  assert.equal(at('', '2026-09-28T00:10:00Z'), '-');
-  assert.equal(at('not-a-date', '2026-09-28T00:10:00Z'), '-');
+  assert.deepEqual([d.run('sortField'), d.run('sortDir')], ['id', -1], '처음 연 목록의 정렬');
+  d.run('currentPage = 1; filteredCves = allCves.slice().sort(compareCves);');
+  assert.deepEqual(d.run('filteredCves.map(c => c.id)'), Array.from({ length: 16 }, (_, i) => cve(16 - i)));
+  // 2010년처럼 옛 연도로 늦게 발급된 번호는 연도 순서대로 아래에 온다
+  d.run("allCves = allCves.concat([Object.assign({}, allCves[0], { id: 'CVE-2010-20111' }), Object.assign({}, allCves[0], { id: 'CVE-2026-100000' })]);");
+  d.run('filteredCves = allCves.slice().sort(compareCves);');
+  const order = d.run('filteredCves.map(c => c.id)');
+  assert.deepEqual([order[0], order[order.length - 1]], ['CVE-2026-100000', 'CVE-2010-20111'], '번호는 숫자로 (자릿수가 달라도)');
+  // 공개일 최신순 — 같은 날은 알림 시각 최신순, 공개일이 없으면 맨 아래
+  const pub = dashboard();
+  pub.run("allCves.find(c => c.id === 'CVE-2026-0003').published = '';");
+  pub.run("setSort('published');");
+  const ids = pub.run('filteredCves.map(c => c.id)');
+  assert.deepEqual(ids.slice(0, 3), [cve(16), cve(15), cve(14)], '2026-09-19 공개 — 같은 날은 알림 시각 최신순');
+  assert.deepEqual(ids.slice(-4), [cve(6), cve(5), cve(11), cve(3)], '08-19 · 08-13 · 08-01, 공개일 없음은 맨 아래');
+  pub.run("sortBy('published');");
+  assert.equal(pub.run('sortDir'), 1, '머리글을 다시 누르면 오래된 순');
+});
+
+test('알림 등급순 — 같은 등급 안은 CISA KEV 먼저, 그다음 공개일 최신 · EPSS 높은 순', () => {
+  const d = dashboard();
+  d.run("setSort('tier');");
+  assert.deepEqual(d.run('filteredCves.map(c => c.id)'),
+    [1, 10, 4, 14, 2, 7, 5, 11, 8, 3, 13, 15, 9, 6, 12, 16].map(cve),
+    'T0: KEV(1 · 10, EPSS 높은 순) 다음 VulnCheck(4) / T1 · T2: 공개일 최신, 같은 날은 EPSS 높은 순 · 그것도 같으면 알림 시각 최신순(15 · 9)');
+  assert.equal(d.run('sortDir'), 1, '등급은 T0 먼저');
+  // KEV 가 공개일보다 앞선다 — 오래된 KEV 가 새 VulnCheck 보다 위
+  d.run("allCves.find(c => c.id === 'CVE-2026-0010').published = '2020-01-01'; applyFilters();");
+  assert.deepEqual(d.run('filteredCves.slice(0, 3).map(c => c.id)'), [cve(1), cve(10), cve(4)]);
 });
 
 test('영향 버전 한 줄 표기 — 수집 단계 형식을 줄이고, 하한이 없으면 상한만', () => {
@@ -873,6 +903,21 @@ test('조건 줄 — 조건 칩은 늘 모두 보이고(접지 않음) 칩에는
   assert.match(d.el('engine-chips').innerHTML, /class="q-chip is-source g-defense" data-term="has:snort"\s+title="Snort 2 · Snort 3 탐지 룰 있음 \(ET Open · Snort Community\) \(검색어 has:snort, 전체 0건\)">\s*<i><\/i>Snort<\/button>/);
   assert.match(d.el('engine-chips').innerHTML, /data-term="has:sigma"[^>]*전체 1건\)">\s*<i><\/i>Sigma</, '건수는 검색어로 센 값');
   assert.match(src, /data-term="has:nuclei"[^>]*title="nuclei 점검 템플릿 있음\. [^"]*탐지 룰에는 넣지 않습니다/);
+  // 출처가 판단하지 못한 CVE 가 많은 칩 — 출처가 판단한 CVE 수 · 비율 · 미확인 수를 지금 데이터로 세어 설명에
+  const agg = d.run('liveAggregate()');
+  for (const [term, code] of [['has:auto', 'AUTOMATABLE'], ['has:ransom', 'RANSOMWARE'], ['lifecycle:eol', 'EOL_AFFECTED'], ['has:patch', 'PATCH_AVAILABLE']]) {
+    const judged = agg.signals[code].yes + agg.signals[code].no;
+    const note = `출처가 판단한 CVE는 ${judged}건(추적 중인 CVE의 ${(judged / 16 * 100).toFixed(1)}%)이고, 나머지 ${16 - judged}건은 미확인입니다 (검색어 ${term},`;
+    assert.ok(unesc(quick.match(new RegExp(`data-term="${term}"[^>]*title="([^"]*)"`))[1]).includes(`. ${note}`), `${term}: ${note}`);
+  }
+  const fxRows = d.run('__fx.cves');
+  assert.equal(agg.signals.AUTOMATABLE.yes + agg.signals.AUTOMATABLE.no,
+               fxRows.filter(c => ['yes', 'no'].includes(String(c.ssvc_automatable || '').toLowerCase())).length, 'SSVC 판정이 있는 CVE');
+  assert.equal(agg.signals.RANSOMWARE.no, 0, "랜섬웨어는 출처가 '있음'만 적어 판단한 CVE = 있음");
+  assert.doesNotMatch(quick, /data-term="has:kev"[^>]*출처가 판단한/, '미확인이 없는 신호에는 적지 않는다');
+  // VulnCheck KEV 는 CISA KEV 항목도 싣는다 — 악용 근거 · VulnCheck KEV 칩 설명에
+  assert.match(quick, /data-term="has:kev"[^>]*title="[^"]*VulnCheck KEV는 CISA KEV 항목도 함께 싣습니다 \(검색어 has:kev,/);
+  assert.match(src, /data-term="has:vulncheck-kev"[^>]*title="VulnCheck KEV 등재\. VulnCheck KEV는 CISA KEV 항목도 함께 싣습니다/);
   // '필터' 숫자 = 필터 안에 들어 있는 조건만 — 검색어와 조건 줄에 늘 보이는 CVSS · EPSS 는 세지 않는다(나란히 보기도 같다)
   d.run("activeFilters.cvssMin = 7; activeFilters.vendor = 'Microsoft'; renderChips();");
   assert.equal(d.el('filter-count').textContent, '1');

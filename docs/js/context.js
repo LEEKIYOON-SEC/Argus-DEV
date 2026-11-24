@@ -62,7 +62,7 @@
   const SIGNALS = [
     { code: 'EXPLOITATION_CONFIRMED', group: 'exploitation', short: '악용 근거', key: 'kev',
       question: '실제 악용 근거가 있는가',
-      def: 'CISA KEV 또는 VulnCheck KEV에 등재됐거나 CISA SSVC 판정이 Exploitation: active인 경우. 세 출처 모두 실제 악용 보고를 기준으로 등재합니다' },
+      def: 'CISA KEV 또는 VulnCheck KEV에 등재됐거나 CISA SSVC 판정이 Exploitation: active인 경우. 세 출처 모두 실제 악용 보고를 기준으로 등재합니다. VulnCheck KEV는 CISA KEV 항목도 함께 싣습니다' },
     { code: 'CISA_KEV', group: 'exploitation', short: 'CISA KEV', key: 'cisa-kev',
       question: 'CISA KEV에 등재됐는가', def: 'CISA Known Exploited Vulnerabilities 카탈로그 등재 여부' },
     { code: 'PUBLIC_EXPLOIT', group: 'weaponization', short: '공개 익스플로잇', key: 'exploit',

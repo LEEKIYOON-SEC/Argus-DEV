@@ -35,8 +35,10 @@ _TRIGGERS: Tuple[Trigger, ...] = (
     Trigger("kev", T0, "CISA KEV 등재 — 실제 악용 확인"),
     Trigger("vulncheck_kev", T0, "VulnCheck KEV 등재 — 악용 근거 확보"),
     Trigger("ssvc_active", T0, "CISA SSVC Exploitation=active — 악용 진행형"),
-    Trigger("metasploit", T0, "Metasploit 모듈 공개 — 무기화됨"),
 
+    # Metasploit 모듈은 공격 코드가 공개됐다는 뜻이고 악용이 관측됐다는 뜻은 아니다 — T1(악용 임박)이다(2026-11 T0 에서 옮김).
+    # T0 · T1 모두 즉시 알림이라 알림 시점은 같고, 이미 알린 행은 발화 이력이 그대로라 다시 알리지 않는다.
+    Trigger("metasploit", T1, "Metasploit 모듈 공개 — 무기화됨"),
     Trigger("nuclei", T1, "nuclei 템플릿 공개 — 대량 스캔·검증 가능"),
     Trigger("exploitdb", T1, "Exploit-DB 공개 익스플로잇 등재"),
     Trigger("epss_critical", T1, "EPSS 상위 1% (p99+) — 악용 확률 최상위"),
