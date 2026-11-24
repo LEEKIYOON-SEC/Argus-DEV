@@ -48,8 +48,8 @@ def _in_week(entry: Dict, start: datetime.date, end: datetime.date) -> bool:
 def build_weekly_body(week_cves: List[Dict], week_label: str,
                       start: datetime.date, end: datetime.date) -> str:
     total = len(week_cves)
-    # date 는 마지막 알림 시각(없으면 마지막 저장 시각)이다 — 처음 추적한 날이 아니라서 '신규'라고 세면
-    # 레코드가 다시 저장된 옛 CVE 까지 들어간다. 이번 주에 공개된 것을 따로 센다.
+    # date 는 알림을 보낸 시각과 CVE 레코드 갱신 시각 중 늦은 것이다(export.event_time) — 처음 추적한 날이 아니라서
+    # '신규'라고 세면 레코드가 갱신된 옛 CVE 까지 들어간다. 이번 주에 공개된 것을 따로 센다.
     published = [c for c in week_cves if _in_range(c.get("published"), start, end)]
     critical = [c for c in week_cves if (c.get("cvss") or 0) >= 9.0]
     kev = [c for c in week_cves if c.get("is_kev")]

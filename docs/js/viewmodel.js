@@ -181,6 +181,7 @@
         : s.PATCH_AVAILABLE === 'no' ? { state: 'no', text: '기록 없음' } : { state: 'unknown', text: '미확인' },
       conflicts: (e.ctx && e.ctx.conflicts) || [],
       published: cve.published || '',
+      recordUpdated: cve.record_updated || '',
     };
   }
 
@@ -199,11 +200,11 @@
     const exploited = agg ? agg.signals.EXPLOITATION_CONFIRMED.yes : null;
     return [
       { id: 'stat-total', key: 'total', label: '추적 중 CVE', value: s.total || (agg && agg.total) || 0, query: '',
-        delta: delta(x.published7, '최근 7일 공개'), line: '최근 90일 안에 갱신된 CVE',
-        title: 'Argus가 최근 90일 안에 평가하거나 상태를 갱신한 CVE입니다. CVE 공개일 기준이 아닙니다' },
+        delta: delta(x.published7, '최근 7일 공개'), line: '최근 90일 안에 Argus가 평가한 CVE',
+        title: 'Argus가 최근 90일 안에 평가하거나 다시 저장한 CVE입니다. CVE 공개일 · 레코드 갱신일 기준이 아닙니다' },
       { id: 'stat-24h', key: 'recent', label: '24시간 알림·갱신', value: s.recent_24h || 0, query: 'recent:24h',
-        delta: null, line: x.recentCritical != null ? `Critical ${fmt(x.recentCritical)} · KEV ${fmt(x.recentKev)}` : '새 공개와 상태 변경 포함',
-        title: '데이터 기준 시각 전 24시간 동안 Argus가 알림을 보냈거나 상태가 바뀐 CVE입니다. 새로 공개된 CVE만 세지 않습니다' },
+        delta: null, line: x.recentCritical != null ? `Critical ${fmt(x.recentCritical)} · KEV ${fmt(x.recentKev)}` : '새 공개와 레코드 갱신 포함',
+        title: '데이터 기준 시각 전 24시간 동안 Argus가 알림을 보냈거나 CVE 레코드가 갱신된 CVE입니다(새로 공개된 CVE 포함). Argus가 정비 작업으로 다시 저장한 것은 세지 않습니다' },
       { id: 'stat-kev', key: 'kev', label: 'CISA KEV', value: v('cisa_kev'), query: 'has:cisa-kev', group: 'exploit',
         delta: delta(x.kevAdded7, '최근 7일 등재'), line: exploited != null ? `악용 근거 전체 ${fmt(exploited)}건` : '',
         title: `CISA KEV 카탈로그에 등재된 CVE입니다${exploited != null ? `. VulnCheck KEV와 SSVC active까지 합친 악용 근거는 ${fmt(exploited)}건입니다` : ''}` },

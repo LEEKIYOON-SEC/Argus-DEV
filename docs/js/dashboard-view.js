@@ -134,7 +134,7 @@ function todayCards() {
     {
       key: 'crit', title: '최근 24시간 Critical', span: '', query: 'recent:24h sev:critical', order: 'CVSS 순',
       wait: '', sort: byCvssDesc,
-      basis: () => `알림·갱신 ${fmt(dashQuery('recent:24h').length)}건 중 · Argus 알림 시각 기준`,
+      basis: () => `알림·갱신 ${fmt(dashQuery('recent:24h').length)}건 중 · 알림 · CVE 레코드 갱신 기준`,
       right: (c, r) => `<span class="t-opt">${threatChips(r)}</span><span class="t-key">공개 ${escapeHtml(shortDay(c.published) || '-')}</span>`,
       empty: '최근 24시간 안에 알림·갱신된 Critical CVE가 없습니다.',
     },

@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import ai_provenance
 import enrichment_sources
-from fields import CWE_RE, meaningful
+from fields import CWE_RE, meaningful, record_time
 from logger import logger
 
 
@@ -222,6 +222,8 @@ class Collector:
             data['state'] = meta.get('state', 'UNKNOWN')
             data['assigner'] = str(meta.get('assignerShortName') or '').strip()
             data['published'] = str(meta.get('datePublished') or '')[:10]
+            # CVE 레코드가 마지막으로 바뀐 시각 — 화면의 '갱신'. 행을 다시 저장한 시각(updated_at)과 다르다.
+            data['record_updated'] = record_time(meta.get('dateUpdated'))
             data['affected'] = self.parse_affected(cna.get('affected', []))
 
             descriptions = cna.get('descriptions', []) or []

@@ -20,6 +20,7 @@ on:
           - seed-turso
           - seed-verify
           - backfill-translations
+          - backfill-record-dates
       dry_run:
         description: 'backfill-cvss: 계산만 하고 저장하지 않기'
         type: boolean
@@ -146,6 +147,15 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/backfill_translations.py
+
+      - name: Backfill CVE record update times
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.task == 'backfill-record-dates' }}
+        env:
+          ARGUS_STORE: turso
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          BACKFILL_RECORD_BUDGET_S: '2400'
+        run: python src/backfill_record_dates.py
 
       - name: Backfill affected vendors
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.task == 'backfill-vendors') }}

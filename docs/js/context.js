@@ -720,7 +720,7 @@
   }
 
   // 최근 공개 — CVE 공개일(published, 날짜 단위) 순, 같은 날이면 Argus 시각(date) 순.
-  // date(알림 시각, 없으면 행 갱신 시각)만으로 세우면 재평가된 옛 CVE 가 맨 위로 온다(실측 CVE-2019-8720).
+  // date(알림 · CVE 레코드 갱신 중 늦은 시각)만으로 세우면 레코드가 갱신된 옛 CVE 가 맨 위로 온다(실측 CVE-2019-8720).
   // date 는 시간대가 섞여 있어(+09:00 등) 문자열이 아니라 시각으로 비교한다.
   const RECENT_SIGNALS = ['CISA_KEV', 'EXPLOITATION_CONFIRMED', 'PUBLIC_EXPLOIT', 'AUTOMATABLE', 'RANSOMWARE',
                           'EOL_AFFECTED'];

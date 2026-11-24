@@ -14,6 +14,8 @@ KST = pytz.timezone('Asia/Seoul')
 
 STATE_FIELDS = frozenset({
     "title", "title_ko", "description", "desc_ko", "cwe", "affected", "published",
+    # CVE 레코드 갱신 시각(cveMetadata.dateUpdated, UTC) — 화면의 '갱신' · 24시간 알림·갱신. 2026-11 부터 받는다.
+    "record_updated",
     "cvss_vector",
     "references", "_nuclei_url", "_exploit_db_url",
     "is_kev", "is_kev_ransomware", "kev_due_date", "is_vulncheck_kev",
