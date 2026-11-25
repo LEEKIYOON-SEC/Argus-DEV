@@ -26,8 +26,9 @@ STATE_FIELDS = frozenset({
     "ai_discovered", "ai_program", "ai_detail", "ai_url", "analysis",
     "cvss", "cvss_version", "cvss_scores", "epss", "epss_percentile", "assigner",
     "tier", "fired_triggers",
-    # 번역을 시도했지만 한국어로 돌아오지 않은 제목(원문) — 같은 제목이면 다시 시도하지 않는다(main.translate_tracked).
-    "ko_tried",
+    # 번역 표시(translation.py) — ko_tried: 모델이 답했지만 쓸 수 없었던 출처 제목 · ko_rule: 그 답을 받은 제목 규칙 판.
+    # 같은 제목 · 같은 판이면 다시 보내지 않는다. 판이 오르면 한 번씩 다시 본다.
+    "ko_tried", "ko_rule",
 })
 
 

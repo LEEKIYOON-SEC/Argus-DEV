@@ -54,6 +54,10 @@ class ArgusConfig:
 
         "translation_minutes": int(os.environ.get("ARGUS_TRANSLATION_MINUTES", "18")),
         "translation_daily_reserve": 0.15,
+        # 먼저 번역하는 '최근 공개'의 범위(일) — 알림 등급(T0 · T1)은 공개일과 상관없이 먼저 한다.
+        "translation_priority_days": 30,
+        # '제품 이름 + 취약점' 제목을 회차마다 다시 만드는 최대 건수 — 다른 번역을 다 하고 남은 한도 안에서만.
+        "translation_regen_per_run": 60,
 
         "analysis_per_run": 100,
         "max_rule_recheck": 400,
