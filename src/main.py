@@ -20,6 +20,7 @@ import risk
 import rule_refresh
 import signal_snapshot
 import state as pstate
+import translation
 from pages import cve_url as _cve_url
 from pages import dashboard_url as _dashboard_url
 from collector import Collector
@@ -44,15 +45,6 @@ try:
     )
 except Exception:
     gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-
-
-def _looks_english(text: str) -> bool:
-    t = (text or '').strip()
-    if not t or t in ("N/A", "-"):
-        return False
-    if re.search(r'[가-힣]', t):
-        return False
-    return len(re.findall(r'[A-Za-z]', t)) >= 8
 
 
 _TOKENS_PER_ITEM = 250
@@ -89,11 +81,27 @@ def translate_tracked(db: Store, deadline_ts: float) -> int:
     logger.info(f"🈯 번역 예산: 최대 {budget:,}건 · {(stop_ts - time.time()) / 60:.0f}분 "
                 f"(추적 {total:,}행)")
 
-    done = 0
+    run = {"sent": 0, "failed": 0, "unusable": 0, "seen": set(),
+           "done": {"우선": 0, "차례": 0, "제목": 0}}
     scanned_total = 0
     max_windows = (total // pool + 2) if total else 25
     try:
-        while done < budget and time.time() < stop_ts and max_windows > 0:
+        # 1) 먼저 — 알림 등급(T0 · T1)이거나 최근 공개된 CVE 중 한국어 제목이 없는 것.
+        #    CVE 번호 순서로만 돌면 새 알림(번호가 큰 행)이 한 바퀴를 기다린다.
+        days = config.PERFORMANCE["translation_priority_days"]
+        since = (datetime.datetime.now(datetime.timezone.utc).date()
+                 - datetime.timedelta(days=days)).isoformat()
+        rows = db.get_translation_priority_candidates(limit=budget, since=since,
+                                                      rule=translation.TITLE_RULE)
+        items = [translation.make_item(r['id'], r['last_alert_state'] or {})
+                 for r in rows if _wanted(r, run)]
+        if items:
+            logger.info(f"🈯 우선 번역 {len(items)}건 (알림 등급 · 최근 {days}일 공개 · 한국어 제목 없음)")
+            _translate_items(db, items, stop_ts, run, "우선")
+
+        # 2) 그다음 — 지금까지처럼 CVE 번호 순서로 돈다(제목 · 설명 중 하나라도 한국어가 아닌 행).
+        while (run["sent"] < budget and time.time() < stop_ts and max_windows > 0
+               and not _translation_exhausted()):
             max_windows -= 1
             offset = pstate.read_backfill_offset()
             if total and offset >= total:
@@ -108,18 +116,10 @@ def translate_tracked(db: Store, deadline_ts: float) -> int:
             scanned = 0
             for row in candidates:
                 scanned += 1
-                state = row.get('last_alert_state') or {}
-                title_ko = state.get('title_ko') or state.get('title') or ''
-                desc_ko = state.get('desc_ko') or state.get('description') or ''
-                if not (_looks_english(title_ko) or _looks_english(desc_ko)):
+                if not _wanted(row, run):
                     continue
-                if state.get('ko_tried') and state.get('ko_tried') == (state.get('title') or title_ko):
-                    continue  # 이 제목은 이미 시도했다 — 제목이 바뀌면 다시 본다
-                items.append({"id": row['id'],
-                              "title": state.get('title') or title_ko,
-                              "description": (state.get('description')
-                                              or state.get('desc_ko') or '')})
-                if len(items) >= budget - done:
+                items.append(translation.make_item(row['id'], row.get('last_alert_state') or {}))
+                if len(items) >= budget - run["sent"]:
                     break
 
             next_offset = offset + scanned
@@ -130,36 +130,79 @@ def translate_tracked(db: Store, deadline_ts: float) -> int:
             if items:
                 logger.info(f"🈯 영문 {len(items)}건 처리 "
                             f"(스캔 {offset:,}~{offset + scanned:,}/{total:,}행)")
-                translations = generate_korean_summaries_batch(items, deadline_ts=stop_ts)
-                for it in items:
-                    tr = translations.get(it['id'])
-                    if not tr:
-                        continue  # 응답이 없었다(한도 · 오류) — 다음 바퀴에 다시 시도
-                    if _looks_english(tr[0]):
-                        # 제품 이름뿐인 제목처럼 옮길 말이 없는 것 — 표시하지 않으면 바퀴마다 다시 보내 한도를 쓴다.
-                        patch = {"ko_tried": it['title']}
-                        if tr[1] and not _looks_english(tr[1]):
-                            patch["desc_ko"] = tr[1]
-                        db.patch_states([{"id": it['id'], "patch": patch}], "번역 표시")
-                        continue
-                    if db.update_translation(it['id'], tr[0], tr[1]):
-                        done += 1
+                _translate_items(db, items, stop_ts, run, "차례")
 
-            if _translation_exhausted():
-                logger.warning("번역 중단 — 일일 한도(RPD/TPD) 소진. 남은 대상은 한도가 "
-                               "풀린 뒤 다음 회차가 이어받는다 (창 위치는 저장돼 있다)")
-                break
             if wrapped:
                 logger.info("번역: 전체를 한 바퀴 돌았다 — 다음 회차는 처음부터")
                 break
+
+        # 3) 마지막 — '제품 이름 + 취약점' 제목을 다시 만든다. 남은 한도 안에서 회차마다 조금씩.
+        _regenerate_generic_titles(db, budget, stop_ts, run)
     except Exception as e:
         logger.warning(f"번역 중단(오류): {e}")
 
+    if _translation_exhausted():
+        logger.warning("번역 중단 — 일일 한도(RPD/TPD) 소진. 남은 대상은 한도가 "
+                       "풀린 뒤 다음 회차가 이어받는다 (창 위치는 저장돼 있다)")
+    done = sum(run["done"].values())
     if done:
         db.request_full_export()
-    logger.info(f"🈯 번역 완료: {done:,}건 한글화 · {scanned_total:,}행 스캔 · "
+    by = run["done"]
+    logger.info(f"🈯 번역 완료: {done:,}건 한글화 (우선 {by['우선']:,} · 차례 {by['차례']:,} · "
+                f"제목 다시 만들기 {by['제목']:,}) · 답 없음 {run['failed']:,}건(다음 회차가 다시 보낸다) · "
+                f"쓸 수 없는 답 {run['unusable']:,}건 · {scanned_total:,}행 스캔 · "
                 f"{'다음 export는 전량' if done else '변경 없음'}")
     return done
+
+
+def _wanted(row: Dict, run: Dict) -> bool:
+    state = row.get('last_alert_state') or {}
+    return (row['id'] not in run["seen"] and translation.wants(state)
+            and not translation.tried(state))
+
+
+def _translate_items(db: Store, items: List[Dict], stop_ts: float, run: Dict, label: str) -> None:
+    run["seen"].update(it['id'] for it in items)
+    run["sent"] += len(items)
+    answers = generate_korean_summaries_batch(items, deadline_ts=stop_ts)
+    patches = []
+    for it in items:
+        answer = answers.get(it['id'])
+        if answer is None:
+            run["failed"] += 1  # 답이 없었다(오류 · 한도 · 시간 초과) — 표시하지 않는다. 다음 회차가 다시 보낸다
+            continue
+        patch = translation.review(it, answer)
+        patches.append({"id": it['id'], "patch": patch})
+        if "title_ko" in patch or "desc_ko" in patch:
+            run["done"][label] += 1
+        if "ko_tried" in patch:
+            run["unusable"] += 1
+    if patches:
+        db.patch_states(patches, "번역")
+
+
+def _regenerate_generic_titles(db: Store, budget: int, stop_ts: float, run: Dict) -> None:
+    cap = min(config.PERFORMANCE["translation_regen_per_run"], budget - run["sent"])
+    if cap <= 0 or time.time() >= stop_ts or _translation_exhausted():
+        return
+    # 끝이 '취약점'인 제목을 cap 의 5배까지 본다 — 유형이 있는 제목은 '지금 규칙으로 봄'(ko_rule)으로 적어
+    # 다음 회차부터 꺼내지 않는다. 그래서 한 번 다 보고 나면 이 조회는 새로 쌓인 것만 돌려준다.
+    rows = db.get_title_regen_candidates(limit=cap * 5, rule=translation.TITLE_RULE)
+    items, checked = [], []
+    for row in rows:
+        state = row.get('last_alert_state') or {}
+        if row['id'] in run["seen"]:
+            continue
+        if not translation.is_generic_title(state.get('title_ko')):
+            checked.append({"id": row['id'], "patch": {"ko_rule": translation.TITLE_RULE}})
+        elif len(items) < cap:
+            items.append(translation.make_item(row['id'], state))
+    if checked:
+        db.patch_states(checked, "제목 확인")
+    if items:
+        logger.info(f"🈯 제목 다시 만들기 {len(items)}건 ('제품 이름 + 취약점' · 회차당 최대 "
+                    f"{config.PERFORMANCE['translation_regen_per_run']}건)")
+        _translate_items(db, items, stop_ts, run, "제목")
 
 
 def _translation_exhausted() -> bool:
@@ -174,32 +217,27 @@ _TRANSLATION_STAGES = config.TRANSLATION_MODELS
 _TR_STAGE_ADVANCE = ("skip", "rate", "transient")
 
 
-def generate_korean_summary(cve_data: Dict, retry_on_transient: bool = False) -> Tuple[str, str]:
-    prompt = f"""
-Task: Translate Title and Summarize Description into Korean.
-[Input] Title: {cve_data['title']} / Desc: {cve_data['description']}
-[Format]
-제목: [Korean Title]
-내용: [Korean Summary (Max 3 lines)]
-Do NOT add intro/outro.
-"""
-
-    fallback = (cve_data['title'], cve_data['description'][:200])
+def generate_korean_summary(item: Dict, retry_on_transient: bool = False) -> Optional[Tuple[str, str]]:
+    """한 건 번역 — 일괄 번역 응답이 깨졌을 때만 쓴다. 답이 없으면 None(원문으로 채우지 않는다)."""
+    prompt = translation.single_prompt(item)
     max_attempts = 3 if retry_on_transient else 1
 
     reason = "skip"
     for model, limiter_key in _TRANSLATION_STAGES:
-        out, reason = _translate_one(prompt, fallback, model, limiter_key, max_attempts)
+        out, reason = _translate_one(prompt, model, limiter_key, max_attempts)
         if out is not None:
             _tr_bump("ok")
             return out
         if reason not in _TR_STAGE_ADVANCE:
             break
     _tr_bump(_TR_REASON_KEY.get(reason, "en_other"))
-    return fallback
+    return None
 
 
-def _translate_one(prompt: str, fallback: Tuple[str, str], model: str, limiter_key: str,
+_ANSWER_LINE = re.compile(r"^\W*(제목|내용)\W*?[:：]\s*(.*)$")
+
+
+def _translate_one(prompt: str, model: str, limiter_key: str,
                    max_attempts: int) -> Tuple[Optional[Tuple[str, str]], str]:
     for attempt in range(1, max_attempts + 1):
         try:
@@ -225,15 +263,15 @@ def _translate_one(prompt: str, fallback: Tuple[str, str], model: str, limiter_k
             rate_limit_manager.record_call(limiter_key, tokens_used=gemini_tokens)
 
             text = (response.text or "").strip()
-            title_ko, desc_ko = fallback
-
+            found = {}
             for line in text.split('\n'):
-                if line.startswith("제목:"):
-                    title_ko = line.replace("제목:", "").strip()
-                if line.startswith("내용:"):
-                    desc_ko = line.replace("내용:", "").strip()
-
-            return (title_ko, desc_ko), "ok"
+                m = _ANSWER_LINE.match(line.strip())
+                if m and m.group(1) not in found:
+                    found[m.group(1)] = m.group(2).strip().strip('*').strip()
+            if not (found.get("제목") or found.get("내용")):
+                logger.warning(f"번역 응답 형식 파손({model}) — '제목:' · '내용:' 줄이 없다")
+                return None, "parse"
+            return (found.get("제목", ""), found.get("내용", "")), "ok"
 
         except Exception as e:
             msg = str(e)
@@ -262,7 +300,7 @@ _gemini_error_kind = gemini_error_kind
 _TR_LOCK = threading.Lock()
 _TR_STATS: Dict[str, int] = {}
 _TR_LABELS = [("en_rpd", "일일한도"), ("en_rate", "분당한도"), ("en_transient", "서버오류"),
-              ("en_deadline", "시간초과"), ("en_other", "기타")]
+              ("en_deadline", "시간초과"), ("en_missing", "답에서 빠짐"), ("en_other", "기타")]
 _TR_REASON_KEY = {"skip": "en_rpd", "rate": "en_rate", "transient": "en_transient",
                   "other": "en_other"}
 
@@ -278,20 +316,25 @@ def _log_translation_summary() -> None:
     with _TR_LOCK:
         snap = dict(_TR_STATS)
     ok = snap.get("ok", 0)
-    fallback = sum(snap.get(k, 0) for k, _ in _TR_LABELS)
-    if not (ok or fallback):
+    missed = sum(snap.get(k, 0) for k, _ in _TR_LABELS)
+    if not (ok or missed):
         return
     breakdown = " · ".join(f"{label} {snap.get(key, 0)}" for key, label in _TR_LABELS)
     rpd = " · ".join(
         f"{model} {u:,}/{l:,}"
         for model, u, l in ((m,) + rate_limit_manager.rpd_status(k) for m, k in _TRANSLATION_STAGES)
     )
-    logger.info(f"🈯 번역 요약(누적): 한글 {ok}건 · 영문폴백 {fallback}건 "
-                f"({breakdown}) · RPD {rpd}")
+    logger.info(f"🈯 번역 요약(누적): 답 받음 {ok}건 · 답 없음 {missed}건 "
+                f"({breakdown}) — 답 없는 항목은 다음 회차가 다시 보낸다 · RPD {rpd}")
 
 
 def generate_korean_summaries_batch(items: List[Dict],
                                     deadline_ts: Optional[float] = None) -> Dict[str, Tuple[str, str]]:
+    """모델이 답한 항목만 {id: (제목, 설명)} 으로 돌려준다 — 오류 · 한도 · 시간 초과 · 답에서 빠진 항목은 없다.
+
+    실패를 원문으로 채워 돌려주면 부르는 쪽은 '모델이 영어로 답했다'와 구별하지 못한다. 2026-11 까지 그래서
+    실패한 행에 '시도함'이 붙어 다시는 번역되지 않았다.
+    """
     results: Dict[str, Tuple[str, str]] = {}
     if not items:
         return results
@@ -307,42 +350,34 @@ def generate_korean_summaries_batch(items: List[Dict],
     state = {"done": 0, "deadline_warned": False, "fell_back": 0}
 
 
-    def _individual(it: Dict, allow_retry: bool) -> Tuple[str, str]:
-        return generate_korean_summary(
-            {"title": it['title'], "description": it['description']},
-            retry_on_transient=allow_retry)
-
-
     def _do_chunk(chunk: List[Dict]) -> Dict[str, Tuple[str, str]]:
         out: Dict[str, Tuple[str, str]] = {}
         if deadline_ts is not None and time.time() > deadline_ts:
             with lock:
                 if not state["deadline_warned"]:
-                    logger.warning(f"⏰ 번역 시간 예산 도달 — 잔여 ~{total_chunks - state['done']}청크 영문 폴백")
+                    logger.warning(f"⏰ 번역 시간 예산 도달 — 남은 ~{total_chunks - state['done']}청크는 "
+                                   f"다음 회차가 보낸다")
                     state["deadline_warned"] = True
-            for it in chunk:
-                out[it['id']] = (it['title'], (it['description'] or '')[:200])
             _tr_bump("en_deadline", len(chunk))
             return out
         try:
             parsed, reason = _translate_chunk(chunk, retry_on_transient=True)
             if parsed is not None:
                 out.update(parsed)
-                _tr_bump("ok", len(chunk))
+                _tr_bump("ok", len(parsed))
+                _tr_bump("en_missing", len(chunk) - len(parsed))
             elif reason == "parse":
                 with lock:
                     state["fell_back"] += len(chunk)
                 for it in chunk:
-                    out[it['id']] = _individual(it, allow_retry=True)
+                    answer = generate_korean_summary(it, retry_on_transient=True)
+                    if answer is not None:
+                        out[it['id']] = answer
             else:
-                for it in chunk:
-                    out[it['id']] = (it['title'], (it['description'] or '')[:200])
                 _tr_bump(_TR_REASON_KEY.get(reason, "en_other"), len(chunk))
         except Exception as e:
-            logger.warning(f"번역 청크 실패 → 영문 폴백: {e}")
-            for it in chunk:
-                out.setdefault(it['id'], (it['title'], (it['description'] or '')[:200]))
-            _tr_bump("en_other", len(chunk))
+            logger.warning(f"번역 청크 실패 — 다음 회차가 다시 보낸다: {e}")
+            _tr_bump("en_other", len(chunk) - len(out))
         with lock:
             state["done"] += 1
             done = state["done"]
@@ -362,18 +397,7 @@ def generate_korean_summaries_batch(items: List[Dict],
 
 def _translate_chunk(chunk: List[Dict],
                      retry_on_transient: bool) -> Tuple[Optional[Dict[str, Tuple[str, str]]], str]:
-    numbered = "\n".join(
-        f"{n}. Title: {it['title']} / Desc: {(it['description'] or '')[:500]}"
-        for n, it in enumerate(chunk, 1)
-    )
-    prompt = f"""You are a translator that outputs ONLY valid JSON. No markdown, no code fences, no commentary.
-For EACH numbered CVE below, translate its Title into Korean and summarize its Description into Korean (each max 2 short lines).
-Keep technical terms in English or Korean transliteration (e.g., "버퍼 오버플로우", "SQL 인젝션") — do NOT translate them literally.
-Output EXACTLY one JSON array with {len(chunk)} objects in the same order, and nothing else:
-[{{"n":1,"title_ko":"...","desc_ko":"..."}}{',...' if len(chunk) > 1 else ''}]
-
-CVEs:
-{numbered}"""
+    prompt = translation.batch_prompt(chunk)
     max_attempts = 3 if retry_on_transient else 1
     reason = "skip"
     for model, limiter_key in _TRANSLATION_STAGES:
@@ -423,13 +447,26 @@ def _translate_chunk_with(chunk: List[Dict], prompt: str, model: str, limiter_ke
 
             if not isinstance(arr, list):
                 return None, "parse"
-            by_n = {int(o.get('n', 0)): o for o in arr if isinstance(o, dict)}
+            by_n: Dict[int, Dict] = {}
+            for o in arr:
+                if isinstance(o, dict):
+                    try:
+                        by_n.setdefault(int(o.get('n', 0)), o)
+                    except (TypeError, ValueError):
+                        continue
+            if not any(1 <= n <= len(chunk) for n in by_n) and len(arr) == len(chunk):
+                # 번호(n)를 빼먹고 순서대로만 답했다 — 순서로 맞춘다
+                by_n = {n: o for n, o in enumerate(arr, 1) if isinstance(o, dict)}
             out: Dict[str, Tuple[str, str]] = {}
             for n, it in enumerate(chunk, 1):
-                o = by_n.get(n, {})
-                title_ko = (o.get('title_ko') or '').strip() or it['title']
-                desc_ko = (o.get('desc_ko') or '').strip() or (it['description'] or '')[:200]
-                out[it['id']] = (title_ko, desc_ko)
+                o = by_n.get(n) or {}
+                title_ko = str(o.get('title_ko') or '').strip()
+                desc_ko = str(o.get('desc_ko') or '').strip()
+                if title_ko or desc_ko:
+                    out[it['id']] = (title_ko, desc_ko)  # 답에서 빠진 항목은 넣지 않는다 — 다음 회차가 다시 보낸다
+            if not out:
+                logger.warning(f"일괄 번역 파싱 실패 (쓸 수 있는 항목 없음, 시도 {attempt})")
+                return None, "parse"
             return out, "ok"
 
         except json.JSONDecodeError as e:

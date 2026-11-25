@@ -55,7 +55,11 @@ class Store(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update_translation(self, cve_id: str, title_ko: str, desc_ko: str) -> bool:
+    def get_translation_priority_candidates(self, limit: int, since: str, rule: int) -> List[Dict]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_title_regen_candidates(self, limit: int, rule: int) -> List[Dict]:
         raise NotImplementedError
 
     @abstractmethod
